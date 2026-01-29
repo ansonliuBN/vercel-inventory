@@ -9,25 +9,28 @@ export async function GET(req: Request) {
   if (deny) return deny;
 
   const { searchParams } = new URL(req.url);
+
   const location = searchParams.get("location");
   const product_name = searchParams.get("product_name");
-  const q = searchParams.get("q");
+  const gs1_key = searchParams.get("gs1_key");
+  const barcode = searchParams.get("barcode");
+
+  if (!location || !product_name) {
+    return NextResponse.json(
+      { ok: false, message: "location and product_name are required" },
+      { status: 400 }
+    );
+  }
 
   let query = supabaseAdmin
     .from("inventory_stock")
-    .select("*")
-    .order("updated_at", { ascending: false });
+    .select("gs1_key,barcode,product_name,expiry,location,qty,updated_at,note")
+    .eq("location", location)
+    .eq("product_name", product_name)
+    .order("expiry", { ascending: true });
 
-  if (location) query = query.eq("location", location);
-  if (product_name) query = query.eq("product_name", product_name);
-
-  // simple search (OR)
-  if (q && q.trim()) {
-    const s = q.trim();
-    query = query.or(
-      `product_name.ilike.%${s}%,barcode.ilike.%${s}%,gs1_key.ilike.%${s}%`
-    );
-  }
+  if (gs1_key) query = query.eq("gs1_key", gs1_key);
+  if (barcode) query = query.eq("barcode", barcode);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ ok: false, error }, { status: 500 });
