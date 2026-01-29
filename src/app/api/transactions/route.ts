@@ -1,6 +1,7 @@
 import { requireApiKey } from "@/lib/requireApiKey";
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { inferTxType } from "@/lib/txType";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,22 @@ export async function POST(req: Request) {
   if (!body) return NextResponse.json({ ok: false, message: "Invalid JSON" }, { status: 400 });
 
   // 必填
-  const type = String(body.type ?? "").toUpperCase(); // IN | OUT | TRANSFER
+  // 允許兩種輸入：
+  // (A) 新版：type = IN|OUT|TRANSFER
+  // (B) 舊版/Excel：purpose = 入庫/出庫/調撥/領用...
+  const typeFromBody = String(body.type ?? "").trim().toUpperCase();
+  const inferred = inferTxType(body.purpose);
+
+  const type = (["IN", "OUT", "TRANSFER"].includes(typeFromBody)
+    ? typeFromBody
+    : inferred) as ("IN" | "OUT" | "TRANSFER" | null);
+  if (!type) {
+    return NextResponse.json(
+      { ok: false, message: "Cannot infer type. Provide type=IN|OUT|TRANSFER or a known purpose string." },
+      { status: 400 }
+    );
+  }
+
   const product_name = String(body.product_name ?? "").trim();
   const qtyRaw = Number.parseInt(String(body.qty ?? "0"), 10) || 0;
 
@@ -110,7 +126,8 @@ export async function POST(req: Request) {
       .insert([{
         record_date,
         place: location,
-        purpose: "IN",
+        purpose: String(body.purpose ?? "").trim() || type,
+        purpose_code: type,
         product_name,
         barcode,
         expiry,
