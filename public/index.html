@@ -1,43 +1,88 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>業務倉儲系統</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>業務端倉儲系統</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        #reader { width: 100%; border-radius: 10px; overflow: hidden; }
+        button { background: #7360f2; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; }
+        .stock-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+        .status-tag { background: #e0e0e0; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+    </style>
 </head>
 <body>
-    <h1>🏢 公司倉總表</h1>
-    <div id="summary">載入中...</div>
 
-    <hr>
-    <h3>快速測試操作</h3>
-    <button onclick="doAction('FACTORY', 'MAIN')">📥 模擬製造端補貨到總倉</button>
-    <br><br>
-    <button onclick="doAction('MAIN', 'LOC_A')">🚚 模擬從總倉撥貨到 A 店</button>
-    <br><br>
-    <button onclick="doAction('LOC_A', 'CONSUMED')">❌ 模擬 A 店銷帳 (使用掉)</button>
+    <div class="card">
+        <h2>🏢 公司總倉現況</h2>
+        <div id="summary">讀取中...</div>
+    </div>
+
+    <div class="card">
+        <h2>📷 條碼掃描 (UUID)</h2>
+        <div id="reader"></div>
+        <div id="result" style="margin-top: 10px; color: green; font-weight: bold;"></div>
+        <button onclick="startScan()">開啟相機掃描</button>
+    </div>
 
     <script>
         const API_URL = '/api/stock';
 
-        // 刷新顯示總表
-        async function refresh() {
+        // 1. 刷新總表數據
+        async function refreshSummary() {
             const res = await fetch(API_URL);
             const data = await res.json();
-            document.getElementById('summary').innerText = JSON.stringify(data, null, 2);
+            const container = document.getElementById('summary');
+            if (data.length === 0) { container.innerHTML = "目前無庫存"; return; }
+            
+            container.innerHTML = data.map(item => `
+                <div class="stock-item">
+                    <span>ID: ${item.item_uuid.substring(0, 8)}...</span>
+                    <span class="status-tag">${item.location}: ${item.current_stock}件</span>
+                </div>
+            `).join('');
         }
 
-        // 執行動作
-        async function doAction(from, to) {
-            const uuid = "UUID-" + Math.floor(Math.random() * 1000000); // 暫時用隨機數代替掃描
-            await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ item_uuid: uuid, from_loc: from, to_loc: to, operator: '業務阿強' })
-            });
-            refresh();
+        // 2. 初始化掃描器邏輯
+        function startScan() {
+            const html5QrCode = new Html5Qrcode("reader");
+            const config = { fps: 10, qrbox: { width: 250, height: 150 } }; // 條碼較長，高度設窄一點好對準
+
+            html5QrCode.start(
+                { facingMode: "environment" }, // 強制使用後鏡頭
+                config,
+                async (decodedText) => {
+                    // 掃描成功後的動作
+                    document.getElementById('result').innerText = "掃描成功: " + decodedText;
+                    
+                    // 暫停掃描避免重複送出
+                    html5QrCode.pause();
+                    
+                    // 送出到 API (預設進貨到總倉)
+                    await fetch(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            item_uuid: decodedText,
+                            from_loc: 'FACTORY',
+                            to_loc: 'MAIN',
+                            operator: '業務現場掃描'
+                        })
+                    });
+
+                    alert("UUID " + decodedText + " 已入庫！");
+                    refreshSummary();
+                    html5QrCode.resume(); // 恢復掃描
+                },
+                (errorMessage) => { /* 掃描中...不報錯 */ }
+            );
         }
 
-        refresh();
+        // 網頁開啟自動整理
+        refreshSummary();
     </script>
 </body>
 </html>
