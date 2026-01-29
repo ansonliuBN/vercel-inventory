@@ -12,11 +12,13 @@ const supabaseAdmin = createClient(
 export async function GET() {
   const { data, error } = await supabaseAdmin
     .from("inventory_stock")
-    .select("id")
-    .limit(1);
+    .select("gs1_key, barcode, product_name, expiry, location, qty, note, updated_at")
+    .order("product_name", { ascending: true })
+    .order("location", { ascending: true })
+    .order("expiry", { ascending: true, nullsFirst: true });
 
   if (error) {
     return NextResponse.json({ ok: false, error }, { status: 500 });
   }
-  return NextResponse.json({ ok: true, sample: data });
+  return NextResponse.json({ ok: true, items: data ?? [] });
 }
