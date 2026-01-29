@@ -49,19 +49,25 @@
         // 2. 初始化掃描器邏輯
         function startScan() {
             const html5QrCode = new Html5Qrcode("reader");
-            const config = { fps: 10, qrbox: { width: 250, height: 150 } }; // 條碼較長，高度設窄一點好對準
+            
+            const config = { 
+                fps: 20, // 提高偵測頻率
+                qrbox: { width: 320, height: 100 }, // 針對長條碼，把框框設得更長更扁
+                aspectRatio: 1.0,
+                // 強制指定只掃描條碼格式 (Code 128)，減少計算負擔提高準確率
+                formatsToSupport: [ Html5QrcodeSupportedFormats.CODE_128 ]
+            };
 
             html5QrCode.start(
-                { facingMode: "environment" }, // 強制使用後鏡頭
+                { facingMode: "environment" }, 
                 config,
                 async (decodedText) => {
-                    // 掃描成功後的動作
-                    document.getElementById('result').innerText = "掃描成功: " + decodedText;
-                    
-                    // 暫停掃描避免重複送出
+                    // 這裡會抓到那一長串包含括號的 UUID
+                    document.getElementById('result').innerText = "讀取成功: " + decodedText;
                     html5QrCode.pause();
                     
-                    // 送出到 API (預設進貨到總倉)
+                    // 這裡可以幫你拆解條碼 (例如：(21)後面才是真正的序號)
+                    // 如果你只需要整串存入，就照舊
                     await fetch(API_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -69,16 +75,15 @@
                             item_uuid: decodedText,
                             from_loc: 'FACTORY',
                             to_loc: 'MAIN',
-                            operator: '業務現場掃描'
+                            operator: '業務掃描'
                         })
                     });
-
-                    alert("UUID " + decodedText + " 已入庫！");
+                    alert("入庫成功！");
                     refreshSummary();
-                    html5QrCode.resume(); // 恢復掃描
+                    html5QrCode.resume();
                 },
-                (errorMessage) => { /* 掃描中...不報錯 */ }
-            );
+                (err) => { /* 掃描中 */ }
+            ).catch(err => alert("啟動失敗: " + err));
         }
 
         // 網頁開啟自動整理
