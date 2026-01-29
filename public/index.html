@@ -47,7 +47,6 @@
             })
                 .then(async ({ data: { text } }) => {
                     // 清理掉空格，方便 Regex 抓取
-                    const cleanText = text.replace(/\s+/g, '');
                     const cleanText = text.replace(/[\s\[\{]/g, '(').replace(/[\]\}]/g, ')');
                     document.getElementById('ocrStatus').innerText = "辨識結果: " + cleanText;
 
