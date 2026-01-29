@@ -43,6 +43,26 @@ function toInt(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+async function postBulk(items) {
+  const res = await fetch(`${API_BASE}/api/transactions/bulk`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": API_KEY,
+    },
+    body: JSON.stringify({ items }),
+  });
+
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+
+  if (!res.ok) {
+    return { ok: false, status: res.status, body: json ?? text };
+  }
+  return { ok: true, body: json ?? text };
+}
+
 async function main() {
   const wb = xlsx.readFile(filePath);
   const sheetName = "Transactions";
@@ -56,70 +76,84 @@ async function main() {
   const rows = xlsx.utils.sheet_to_json(ws, { defval: "" });
   console.log(`Read Transactions rows: ${rows.length}`);
 
-  // Excel columns we saw:
-  // 紀錄日期, 地點, 目的, 產品名稱, UDI/批號, 效期, 數量, 經手人, GS1Key, 備註
+  // 重要：你的「目的」欄不是 IN/OUT，而是「對方地點」
+  // 規則：有目的 = OUT（從 location 出庫到 目的）；目的空 = IN（進到 location）
   const items = rows
-    .map((r) => ({
+    .map((r) => {
       const dest = String(r["目的"] ?? "").trim();
+      const location = String(r["地點"] ?? "").trim();
+      const product_name = String(r["產品名稱"] ?? "").trim();
+      const qty = toInt(r["數量"]);
 
+      if (dest) {
         return {
-        // 如果有「目的」，代表從 location 出庫
-        type: dest ? "OUT" : "IN",
-        purpose: dest || "入庫",
+          type: "TRANSFER",
+          purpose: "調撥",
+          record_date: toISODate(r["紀錄日期"]) || null,
+          from_location: location,
+          to_location: dest,
+          product_name,
+          barcode: String(r["UDI/批號"] ?? "").trim() || null,
+          expiry: toISODate(r["效期"]) || null,
+          qty,
+          handler: String(r["經手人"] ?? "").trim() || null,
+          gs1_key: String(r["GS1Key"] ?? "").trim() || null,
+          note: String(r["備註"] ?? "").trim() || null,
+        };
+      }
+
+      return {
+        type: "IN",
+        purpose: "入庫",
         record_date: toISODate(r["紀錄日期"]) || null,
-        location: String(r["地點"] ?? "").trim(),
-        product_name: String(r["產品名稱"] ?? "").trim(),
+        location,
+        product_name,
         barcode: String(r["UDI/批號"] ?? "").trim() || null,
         expiry: toISODate(r["效期"]) || null,
-        qty: toInt(r["數量"]),
+        qty,
         handler: String(r["經手人"] ?? "").trim() || null,
         gs1_key: String(r["GS1Key"] ?? "").trim() || null,
-        note: dest ? `to ${dest}` : null,
-        };
-             // 中文目的（後端會 infer）
-      record_date: toISODate(r["紀錄日期"]) || null,
-      location: String(r["地點"] ?? "").trim(),
-      product_name: String(r["產品名稱"] ?? "").trim(),
-      barcode: String(r["UDI/批號"] ?? "").trim() || null,
-      expiry: toISODate(r["效期"]) || null,
-      qty: toInt(r["數量"]),
-      handler: String(r["經手人"] ?? "").trim() || null,
-      gs1_key: String(r["GS1Key"] ?? "").trim() || null,
-      note: String(r["備註"] ?? "").trim() || null,
-    }))
-    .filter((it) => it.location && it.product_name && it.qty > 0);
+        note: String(r["備註"] ?? "").trim() || null,
+      };
+    })
+    .filter((it) => {
+      const hasLoc =
+        (it.type === "TRANSFER" && it.from_location && it.to_location) ||
+        (it.type !== "TRANSFER" && it.location);
+
+      return hasLoc && it.product_name && it.qty > 0;
+    });
+
 
   console.log(`Prepared items: ${items.length}`);
 
-  // Send in chunks (safe)
+  if (items.length === 0) {
+    console.log("Nothing to send.");
+    return;
+  }
+
+  // 分批送
   const chunkSize = 50;
   let sent = 0;
 
   for (let i = 0; i < items.length; i += chunkSize) {
     const chunk = items.slice(i, i + chunkSize);
 
-    const res = await fetch(`${API_BASE}/api/transactions/bulk`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-      },
-      body: JSON.stringify({ items: chunk }),
-    });
+    // 額外輸出前 1 筆，讓你確認目的判斷是否合理
+    if (i === 0) {
+      console.log("Sample first item:", chunk[0]);
+    }
 
-    const text = await res.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch {}
-
-    if (!res.ok) {
+    const result = await postBulk(chunk);
+    if (!result.ok) {
       console.error("❌ Bulk failed at chunk starting", i);
-      console.error("Status:", res.status);
-      console.error("Response:", json ?? text);
+      console.error("Status:", result.status);
+      console.error("Response:", result.body);
       process.exit(1);
     }
 
     sent += chunk.length;
-    console.log(`✅ Sent ${sent}/${items.length}`, json ?? "");
+    console.log(`✅ Sent ${sent}/${items.length}`, result.body);
   }
 
   console.log("🎉 Done pushing Transactions to /api/transactions/bulk");
