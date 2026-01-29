@@ -100,10 +100,11 @@ export async function POST(req: Request) {
 
   const payload = { items: normalized };
 
-  const { data, error } = await supabaseAdmin.rpc("apply_transactions_bulk", { payload });
-  if (error) {
-    return NextResponse.json({ ok: false, error }, { status: 500 });
-  }
+  const { data, error } = await supabaseAdmin.rpc("apply_transactions_bulk", {
+    payload,
+    apply_inventory: false,
+  });
+
 
   return NextResponse.json({ ok: true, result: data });
 }
