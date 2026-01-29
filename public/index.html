@@ -3,106 +3,131 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>業務端倉儲系統</title>
-    <script src="https://unpkg.com/html5-qrcode"></script>
+    <title>業務端倉儲系統-OCR暴力版</title>
     <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }
-        .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        #reader { width: 100%; border-radius: 10px; overflow: hidden; }
-        button { background: #7360f2; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; width: 100%; font-size: 16px; margin-top: 10px; }
-        .stock-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
-        .status-tag { background: #e0e0e0; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; color: #333; }
+        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        button { background: #7360f2; color: white; border: none; padding: 15px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 18px; font-weight: bold; }
+        #ocrStatus { margin-top: 15px; font-size: 14px; color: #666; line-height: 1.6; word-break: break-all; }
+        .preview-canvas { width: 100%; border: 1px solid #ddd; margin-top: 10px; border-radius: 8px; display: none; }
     </style>
 </head>
 <body>
 
     <div class="card">
         <h2>🏢 公司總倉現況</h2>
-        <div id="summary">讀取中...</div>
+        <div id="summary">連線中...</div>
     </div>
 
     <div class="card">
-    <h2>📸 拍照辨識入庫 (OCR)</h2>
-    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
-    <button onclick="document.getElementById('photoInput').click()">📷 拍攝條碼數字</button>
-    <div id="ocrStatus"></div>
+        <h2>📸 拍照辨識入庫</h2>
+        <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+        <button onclick="document.getElementById('photoInput').click()">📷 點擊拍照 (請對準數字)</button>
+        <canvas id="debugCanvas" class="preview-canvas"></canvas>
+        <div id="ocrStatus">等待指令...</div>
     </div>
 
-    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+    <script src='https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js'></script>
     <script>
-        // 引入 Tesseract.js (建議用 v4 以上版本，辨識力更強)
-        // <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
-
+        const API_URL = '/api/stock';
         const photoInput = document.getElementById('photoInput');
+        const ocrStatus = document.getElementById('ocrStatus');
 
         photoInput.onchange = async function() {
             const file = photoInput.files[0];
             if (!file) return;
 
-            document.getElementById('ocrStatus').innerText = "🔥 正在進行暴力辨識與圖像預處理...";
-
-            // 1. 圖像預處理：轉成黑白、增強對比 (這對讀取細小數字至關重要)
-            const processedImage = await preprocessImage(file);
-
-            // 2. 暴力辨識模式：開啟自動轉向 + 限制字元集 (只認數字、括號、橫槓)
-            Tesseract.recognize(processedImage, 'eng', {
-                logger: m => console.log(m.status, Math.round(m.progress * 100) + "%"),
-                // 核心設定：嘗試旋轉 0, 90, 180, 270 度
-                rotateAuto: true,
-            }).then(async ({ data: { text } }) => {
-                console.log("原始辨識內容:", text);
-
-                // 3. 暴力修正邏輯：處理常見誤讀 (例如 0 變 O, 1 變 I, ( 變 [ )
-                let cleanText = text
-                    .replace(/\s+/g, '')       // 刪除所有空白
-                    .replace(/[\[\{]/g, '(')   // [ { 轉成 (
-                    .replace(/[\]\}]/g, ')')   // ] } 轉成 )
-                    .replace(/O/g, '0')        // O 轉成 0
-                    .replace(/[Il|]/g, '1')    // I l | 轉成 1
-                    .replace(/S/g, '5');       // S 轉成 5
-
-                document.getElementById('ocrStatus').innerText = "辨識完成，正在拆解...";
-
-                // 4. 正則抓取 (01), (17), (21)
-                const pCode = cleanText.match(/\(01\)(\d{14})/)?.[1]; // 產品碼通常14位
-                const eDate = cleanText.match(/\(17\)(\d{6})/)?.[1];  // 有效日期通常6位
-                const uuidMatch = cleanText.match(/\(21\)([\w-]+)/)?.[1];
+            ocrStatus.innerHTML = "🌀 正在進行影像優化與暴力辨識...";
+            
+            try {
+                // 1. 影像預處理 (黑白 + 銳化)
+                const processedImageData = await preprocessImage(file);
                 
-                // 抓取 UUID 前 12 碼
+                // 2. 執行辨識
+                const result = await Tesseract.recognize(processedImageData, 'eng', {
+                    logger: m => {
+                        if(m.status === 'recognizing text') ocrStatus.innerText = `辨識進度: ${Math.round(m.progress * 100)}%`;
+                    }
+                });
+
+                let text = result.data.text;
+                console.log("原始辨識結果:", text);
+
+                // 3. 暴力清理字串
+                let cleanText = text
+                    .replace(/\s+/g, '')       // 刪除空白
+                    .replace(/[\[\{]/g, '(')   // 修正括號誤讀
+                    .replace(/[\]\}]/g, ')')
+                    .replace(/O/g, '0')        // 修正數字誤讀
+                    .replace(/[Il|]/g, '1')
+                    .replace(/S/g, '5')
+                    .replace(/B/g, '8');
+
+                // 4. 解析 GS1-128 格式
+                // 產品碼(01), 效期(17), 序號(21)
+                const pCode = cleanText.match(/\(01\)(\d{13,14})/)?.[1];
+                const eDate = cleanText.match(/\(17\)(\d{6})/)?.[1];
+                const uuidMatch = cleanText.match(/\(21\)([A-Za-z0-9-]+)/)?.[1];
+                
+                // 只要 UUID 前 12 碼
                 const shortUuid = uuidMatch ? uuidMatch.substring(0, 12) : null;
 
                 if (shortUuid) {
-                    alert(`✅ 抓到序號！\nUUID: ${shortUuid}\n效期: ${eDate}\n產品碼: ${pCode}`);
-                    // 送往 API 存入 Supabase... (代碼同前)
+                    const info = `✅ 辨識成功！\n序號: ${shortUuid}\n效期: ${eDate || '未抓到'}\n產品碼: ${pCode || '未抓到'}`;
+                    ocrStatus.innerText = info;
+                    
+                    // 送往 API
+                    await sendToDatabase(shortUuid, pCode, eDate);
                 } else {
-                    alert("❌ 辨識結果不夠清晰，請靠近一點拍數字！\n辨識到的是：" + cleanText);
+                    ocrStatus.innerHTML = `❌ 無法精準解析。<br>抓到字串為: ${cleanText}<br>請重新拍攝，確保數字清晰且無反光。`;
                 }
-            });
+            } catch (err) {
+                ocrStatus.innerText = "出錯了: " + err.message;
+            }
         };
 
-        // 圖像預處理：把照片變成適合 OCR 的「黑白高對比」
+        async function sendToDatabase(uuid, pcode, edate) {
+            await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    item_uuid: uuid,
+                    product_code: pcode,
+                    expiry_date: edate,
+                    from_loc: 'FACTORY',
+                    to_loc: 'MAIN',
+                    operator: 'OCR_Mobile'
+                })
+            });
+            alert("資料已同步至 Supabase！");
+        }
+
         async function preprocessImage(file) {
             return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const img = new Image();
                     img.onload = () => {
-                        const canvas = document.createElement('canvas');
+                        const canvas = document.getElementById('debugCanvas');
                         const ctx = canvas.getContext('2d');
-                        canvas.width = img.width;
-                        canvas.height = img.height;
                         
-                        // 轉成黑白並增加對比
-                        ctx.filter = 'grayscale(100%) contrast(200%) brightness(120%)';
-                        ctx.drawImage(img, 0, 0);
-                        resolve(canvas.toDataURL('image/jpeg', 0.8));
+                        // 只取圖片中間 40% 的區域，減少干擾 (Crop)
+                        const cropHeight = img.height * 0.4;
+                        canvas.width = img.width;
+                        canvas.height = cropHeight;
+                        
+                        // 套用濾鏡：黑白 + 強烈對比
+                        ctx.filter = 'grayscale(100%) contrast(300%) brightness(110%)';
+                        ctx.drawImage(img, 0, img.height * 0.3, img.width, cropHeight, 0, 0, img.width, cropHeight);
+                        
+                        canvas.style.display = 'block'; // 顯示預覽圖方便除錯
+                        resolve(canvas.toDataURL('image/jpeg', 0.9));
                     };
                     img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
             });
         }
-    
     </script>
 </body>
 </html>
