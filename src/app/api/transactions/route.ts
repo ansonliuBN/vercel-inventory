@@ -57,9 +57,7 @@ export async function POST(req: Request) {
   const handler = String(body.handler ?? "").trim() || null;
   const note = String(body.note ?? "").trim() || null;
 
-  if (!["IN", "OUT", "TRANSFER"].includes(type)) {
-    return NextResponse.json({ ok: false, message: "type must be IN|OUT|TRANSFER" }, { status: 400 });
-  }
+
   if (!product_name) return NextResponse.json({ ok: false, message: "product_name is required" }, { status: 400 });
   if (qtyRaw <= 0) return NextResponse.json({ ok: false, message: "qty must be > 0" }, { status: 400 });
 
