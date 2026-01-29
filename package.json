@@ -1,0 +1,19 @@
+{
+  "name": "vercel-inventory",
+  "private": true,
+  "scripts": {
+    "save": "git add -A && git commit -m \"save\" || echo \"nothing to commit\" && git push"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.93.2",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.1.0",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^5.9.3"
+  }
+}
