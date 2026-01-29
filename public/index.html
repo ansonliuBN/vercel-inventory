@@ -22,72 +22,40 @@
     </div>
 
     <div class="card">
-        <h2>📷 條碼掃描 (UUID)</h2>
-        <div id="reader"></div>
-        <div id="result" style="margin-top: 10px; color: green; font-weight: bold;"></div>
-        <button onclick="startScan()">開啟相機掃描</button>
+    <h2>📸 拍照辨識入庫 (OCR)</h2>
+    <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+    <button onclick="document.getElementById('photoInput').click()">📷 拍攝條碼數字</button>
+    <div id="ocrStatus"></div>
     </div>
 
+    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
     <script>
-        const API_URL = '/api/stock';
+        const photoInput = document.getElementById('photoInput');
 
-        // 1. 刷新總表數據
-        async function refreshSummary() {
-            const res = await fetch(API_URL);
-            const data = await res.json();
-            const container = document.getElementById('summary');
-            if (data.length === 0) { container.innerHTML = "目前無庫存"; return; }
-            
-            container.innerHTML = data.map(item => `
-                <div class="stock-item">
-                    <span>ID: ${item.item_uuid.substring(0, 8)}...</span>
-                    <span class="status-tag">${item.location}: ${item.current_stock}件</span>
-                </div>
-            `).join('');
-        }
+        photoInput.onchange = function() {
+            const file = photoInput.files[0];
+            if (!file) return;
 
-        // 2. 初始化掃描器邏輯
-        function startScan() {
-            const html5QrCode = new Html5Qrcode("reader");
-            
-            const config = { 
-                fps: 20, // 提高偵測頻率
-                qrbox: { width: 320, height: 100 }, // 針對長條碼，把框框設得更長更扁
-                aspectRatio: 1.0,
-                // 強制指定只掃描條碼格式 (Code 128)，減少計算負擔提高準確率
-                formatsToSupport: [ Html5QrcodeSupportedFormats.CODE_128 ]
-            };
+            document.getElementById('ocrStatus').innerText = "辨識中，請稍候...";
 
-            html5QrCode.start(
-                { facingMode: "environment" }, 
-                config,
-                async (decodedText) => {
-                    // 這裡會抓到那一長串包含括號的 UUID
-                    document.getElementById('result').innerText = "讀取成功: " + decodedText;
-                    html5QrCode.pause();
-                    
-                    // 這裡可以幫你拆解條碼 (例如：(21)後面才是真正的序號)
-                    // 如果你只需要整串存入，就照舊
-                    await fetch(API_URL, {
+            // 使用 Tesseract.js 直接在瀏覽器辨識文字
+            Tesseract.recognize(file, 'eng', { logger: m => console.log(m) })
+                .then(async ({ data: { text } }) => {
+                    // 清理掉空格，方便 Regex 抓取
+                    const cleanText = text.replace(/\s+/g, '');
+                    document.getElementById('ocrStatus').innerText = "辨識結果: " + cleanText;
+
+                    // 送去後端拆解並存檔
+                    const res = await fetch('/api/stock', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            item_uuid: decodedText,
-                            from_loc: 'FACTORY',
-                            to_loc: 'MAIN',
-                            operator: '業務掃描'
-                        })
+                        body: JSON.stringify({ raw_text: cleanText, operator: 'OCR辨識' })
                     });
-                    alert("入庫成功！");
-                    refreshSummary();
-                    html5QrCode.resume();
-                },
-                (err) => { /* 掃描中 */ }
-            ).catch(err => alert("啟動失敗: " + err));
-        }
-
-        // 網頁開啟自動整理
-        refreshSummary();
+                    
+                    const result = await res.json();
+                    if (result.shortUuid) alert("入庫成功: " + result.shortUuid);
+                });
+        };
     </script>
 </body>
 </html>
