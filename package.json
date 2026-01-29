@@ -2,7 +2,8 @@
   "name": "vercel-inventory",
   "private": true,
   "scripts": {
-    "save": "git add -A && git commit -m \"save\" || echo \"nothing to commit\" && git push"
+    "save": "git add -A && (git commit -m \"save\" || true) && git push"
+
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.93.2",
