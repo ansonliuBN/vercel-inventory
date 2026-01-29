@@ -9,10 +9,11 @@
     "save": "git add -A && (git commit -m \"save\" || true) && git push"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.93.2",
+    "@supabase/supabase-js": "^2.93.3",
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "viber-bot": "^1.0.18",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

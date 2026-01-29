@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>業務倉儲系統</title>
+</head>
+<body>
+    <h1>🏢 公司倉總表</h1>
+    <div id="summary">載入中...</div>
+
+    <hr>
+    <h3>快速測試操作</h3>
+    <button onclick="doAction('FACTORY', 'MAIN')">📥 模擬製造端補貨到總倉</button>
+    <br><br>
+    <button onclick="doAction('MAIN', 'LOC_A')">🚚 模擬從總倉撥貨到 A 店</button>
+    <br><br>
+    <button onclick="doAction('LOC_A', 'CONSUMED')">❌ 模擬 A 店銷帳 (使用掉)</button>
+
+    <script>
+        const API_URL = '/api/stock';
+
+        // 刷新顯示總表
+        async function refresh() {
+            const res = await fetch(API_URL);
+            const data = await res.json();
+            document.getElementById('summary').innerText = JSON.stringify(data, null, 2);
+        }
+
+        // 執行動作
+        async function doAction(from, to) {
+            const uuid = "UUID-" + Math.floor(Math.random() * 1000000); // 暫時用隨機數代替掃描
+            await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_uuid: uuid, from_loc: from, to_loc: to, operator: '業務阿強' })
+            });
+            refresh();
+        }
+
+        refresh();
+    </script>
+</body>
+</html>
