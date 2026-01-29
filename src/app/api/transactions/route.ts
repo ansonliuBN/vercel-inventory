@@ -41,10 +41,16 @@ export async function GET(req: Request) {
 
   // ✅ clean mode：排除 place=IN/OUT/TRANSFER + 只保留 purpose_code 或 purpose 白名單
   if (mode === "clean") {
-    query = query.not("place", "in", '("IN","OUT","TRANSFER")');
+    query = query
+      .not("place", "in", '("IN","OUT","TRANSFER")')
+      .not("purpose", "in", '("IN","OUT","TRANSFER")')
+      .not("product_name", "is", null)
+      .not("place", "is", null)
+      .not("purpose", "is", null)
+      .not("record_date", "is", null);
 
-    const purposeIn = `purpose.in.(${CLEAN_PURPOSES.map((x) => `"${x}"`).join(",")})`;
-    query = query.or(`purpose_code.not.is.null,${purposeIn}`);
+    // ✅ 핵심：只收新系統標過的
+    query = query.not("purpose_code", "is", null);
   }
 
   // keyword search（注意：這是另一個 or，會跟上面的條件一起疊加）
