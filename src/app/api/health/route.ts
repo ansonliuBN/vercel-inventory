@@ -1,14 +1,22 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
 export const runtime = "nodejs";
 
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  { auth: { persistSession: false } }
+);
+
 export async function GET() {
-  const url = process.env.SUPABASE_URL ?? "";
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-  return NextResponse.json({
-    hasUrl: url.length > 0,
-    hasKey: key.length > 0,
-    urlPreview: url.slice(0, 8) + "..." + url.slice(-12), // 只露前後一小段
-    urlLength: url.length,
-    keyLength: key.length
-  });
+  const { data, error } = await supabaseAdmin
+    .from("inventory_stock")
+    .select("id")
+    .limit(1);
+
+  if (error) {
+    return NextResponse.json({ ok: false, error }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true, sample: data });
 }
