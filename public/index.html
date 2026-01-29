@@ -30,35 +30,79 @@
 
     <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
     <script>
+        // 引入 Tesseract.js (建議用 v4 以上版本，辨識力更強)
+        // <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
+
         const photoInput = document.getElementById('photoInput');
 
-        photoInput.onchange = function() {
+        photoInput.onchange = async function() {
             const file = photoInput.files[0];
             if (!file) return;
 
-            document.getElementById('ocrStatus').innerText = "辨識中，請稍候...";
+            document.getElementById('ocrStatus').innerText = "🔥 正在進行暴力辨識與圖像預處理...";
 
-            photoInput.onchange = async function() {
-            const file = photoInput.files[0];
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = async () => {
-                const base64Image = reader.result.split(',')[1];
-                document.getElementById('ocrStatus').innerText = "雲端辨識中...";
+            // 1. 圖像預處理：轉成黑白、增強對比 (這對讀取細小數字至關重要)
+            const processedImage = await preprocessImage(file);
 
-                const res = await fetch('/api/stock', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        image: base64Image, 
-                        operator: '雲端OCR' 
-                    })
-                });
-                const result = await res.json();
-                alert("結果：" + JSON.stringify(result));
-            };
+            // 2. 暴力辨識模式：開啟自動轉向 + 限制字元集 (只認數字、括號、橫槓)
+            Tesseract.recognize(processedImage, 'eng', {
+                logger: m => console.log(m.status, Math.round(m.progress * 100) + "%"),
+                // 核心設定：嘗試旋轉 0, 90, 180, 270 度
+                rotateAuto: true,
+            }).then(async ({ data: { text } }) => {
+                console.log("原始辨識內容:", text);
+
+                // 3. 暴力修正邏輯：處理常見誤讀 (例如 0 變 O, 1 變 I, ( 變 [ )
+                let cleanText = text
+                    .replace(/\s+/g, '')       // 刪除所有空白
+                    .replace(/[\[\{]/g, '(')   // [ { 轉成 (
+                    .replace(/[\]\}]/g, ')')   // ] } 轉成 )
+                    .replace(/O/g, '0')        // O 轉成 0
+                    .replace(/[Il|]/g, '1')    // I l | 轉成 1
+                    .replace(/S/g, '5');       // S 轉成 5
+
+                document.getElementById('ocrStatus').innerText = "辨識完成，正在拆解...";
+
+                // 4. 正則抓取 (01), (17), (21)
+                const pCode = cleanText.match(/\(01\)(\d{14})/)?.[1]; // 產品碼通常14位
+                const eDate = cleanText.match(/\(17\)(\d{6})/)?.[1];  // 有效日期通常6位
+                const uuidMatch = cleanText.match(/\(21\)([\w-]+)/)?.[1];
+                
+                // 抓取 UUID 前 12 碼
+                const shortUuid = uuidMatch ? uuidMatch.substring(0, 12) : null;
+
+                if (shortUuid) {
+                    alert(`✅ 抓到序號！\nUUID: ${shortUuid}\n效期: ${eDate}\n產品碼: ${pCode}`);
+                    // 送往 API 存入 Supabase... (代碼同前)
+                } else {
+                    alert("❌ 辨識結果不夠清晰，請靠近一點拍數字！\n辨識到的是：" + cleanText);
+                }
+            });
         };
-    };
+
+        // 圖像預處理：把照片變成適合 OCR 的「黑白高對比」
+        async function preprocessImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        
+                        // 轉成黑白並增加對比
+                        ctx.filter = 'grayscale(100%) contrast(200%) brightness(120%)';
+                        ctx.drawImage(img, 0, 0);
+                        resolve(canvas.toDataURL('image/jpeg', 0.8));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+    
     </script>
 </body>
 </html>
