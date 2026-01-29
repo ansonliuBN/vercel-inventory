@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>業務端 - 掃描入庫</title>
+    <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; color: #333; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        button { background: #7360f2; color: white; border: none; padding: 18px; border-radius: 10px; cursor: pointer; width: 100%; font-size: 18px; font-weight: bold; margin-bottom: 15px; }
+        .back-btn { background: #666; margin-top: 10px; }
+        #ocrStatus { margin-top: 20px; font-size: 15px; color: #444; word-break: break-all; min-height: 50px; }
+        .preview-canvas { width: 100%; border: 2px solid #7360f2; margin-top: 15px; border-radius: 10px; display: none; }
+        .loading-spinner { display: none; margin: 10px auto; width: 30px; height: 30px; border: 3px solid #f3f3f3; border-top: 3px solid #7360f2; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h2>📷 產品條碼辨識</h2>
+        <p style="font-size: 14px; color: #888;">請對準條碼下方的「數字」拍照</p>
+        
+        <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+        <button onclick="document.getElementById('photoInput').click()">📸 開啟相機拍照</button>
+        <button class="back-btn" onclick="location.href='index.html'">⬅️ 回到總表</button>
+
+        <div class="loading-spinner" id="spinner"></div>
+        <canvas id="debugCanvas" class="preview-canvas"></canvas>
+        <div id="ocrStatus">準備就緒</div>
+    </div>
+
+    <script src='https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js'></script>
+    <script>
+        const photoInput = document.getElementById('photoInput');
+        const ocrStatus = document.getElementById('ocrStatus');
+        const spinner = document.getElementById('spinner');
+
+        photoInput.onchange = async function() {
+            const file = photoInput.files[0];
+            if (!file) return;
+
+            ocrStatus.innerText = "🌀 正在處理影像...";
+            spinner.style.display = "block";
+            
+            try {
+                // 1. 影像暴力預處理 (黑白化 + 強對比)
+                const processedImageData = await preprocessImage(file);
+                
+                ocrStatus.innerText = "🔍 正在解析文字 (OCR)...";
+                
+                // 2. Tesseract 辨識
+                const result = await Tesseract.recognize(processedImageData, 'eng', {
+                    logger: m => {
+                        if(m.status === 'recognizing text') {
+                            ocrStatus.innerText = `辨識中: ${Math.round(m.progress * 100)}%`;
+                        }
+                    }
+                });
+
+                // 3. 暴力修正字串
+                let cleanText = result.data.text
+                    .replace(/\s+/g, '')       // 刪去空白
+                    .replace(/[\[\{]/g, '(')   // 括號修正
+                    .replace(/[\]\}]/g, ')')
+                    .replace(/O/g, '0')        // 0/O 修正
+                    .replace(/[Il|]/g, '1')    // 1/I/l 修正
+                    .replace(/S/g, '5')
+                    .replace(/B/g, '8');
+
+                console.log("最終處理文字:", cleanText);
+
+                // 4. 解析 GS1-128 內容
+                const pCode = cleanText.match(/\(01\)(\d{13,14})/)?.[1];
+                const eDate = cleanText.match(/\(17\)(\d{6})/)?.[1];
+                const uuidMatch = cleanText.match(/\(21\)([A-Za-z0-9-]+)/)?.[1];
+                
+                const shortUuid = uuidMatch ? uuidMatch.substring(0, 12) : null;
+
+                if (shortUuid) {
+                    ocrStatus.innerHTML = `<b style="color:green">✅ 辨識成功</b><br>UUID: ${shortUuid}<br>效期: ${eDate || '未抓到'}`;
+                    
+                    // 5. 存入資料庫 (呼叫後端 API)
+                    await fetch('/api/stock', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            item_uuid: shortUuid,
+                            product_code: pCode,
+                            expiry_date: eDate,
+                            from_loc: 'FACTORY',
+                            to_loc: 'MAIN',
+                            operator: 'OCR入庫'
+                        })
+                    });
+                    alert(`物料 ${shortUuid} 已存入公司倉！`);
+                } else {
+                    ocrStatus.innerHTML = `<b style="color:red">❌ 解析失敗</b><br>抓到字串: ${cleanText}<br>提示：請拍更近、更清楚一點。`;
+                }
+            } catch (err) {
+                ocrStatus.innerText = "出錯了: " + err.message;
+            } finally {
+                spinner.style.display = "none";
+            }
+        };
+
+        // 影像處理：轉黑白 + 裁切中央
+        async function preprocessImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.getElementById('debugCanvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        // 只取中央 40% 區域
+                        const cropHeight = img.height * 0.4;
+                        canvas.width = img.width;
+                        canvas.height = cropHeight;
+                        
+                        // 強烈對比濾鏡
+                        ctx.filter = 'grayscale(100%) contrast(300%) brightness(110%)';
+                        ctx.drawImage(img, 0, img.height * 0.3, img.width, cropHeight, 0, 0, img.width, cropHeight);
+                        
+                        canvas.style.display = 'block';
+                        resolve(canvas.toDataURL('image/jpeg', 0.9));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+    </script>
+</body>
+</html>

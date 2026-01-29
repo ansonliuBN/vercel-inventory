@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>現場銷貨</title>
+    <style>
+        body { font-family: sans-serif; padding: 15px; background: #f4f4f9; }
+        .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+        .near-expiry { color: red; font-weight: bold; }
+        .btn-consume { background: #eb5757; color: white; border: none; padding: 8px 15px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2 id="locTitle">📍 正在定位...</h2>
+        <select id="manualLoc" onchange="loadList(this.value)" style="width:100%; padding:8px;">
+            <option value="">或手動選地點...</option>
+        </select>
+    </div>
+
+    <div id="stockList"></div>
+
+    <script>
+        async function detect() {
+            const { data: locs } = await supabase.from('locations').select('*');
+            const select = document.getElementById('manualLoc');
+            locs.forEach(l => select.add(new Option(l.name, l.name)));
+
+            // 座標定位
+            navigator.geolocation.getCurrentPosition(pos => {
+                const { latitude: lat, longitude: lng } = pos.coords;
+                const found = locs.find(l => getDistance(lat, lng, l.lat, l.lng) < (l.radius || 500));
+                if(found) {
+                    document.getElementById('locTitle').innerText = "📍 目前位置：" + found.name;
+                    loadList(found.name);
+                } else {
+                    document.getElementById('locTitle').innerText = "📍 無法判定地點，請手動選擇";
+                }
+            }, () => {
+                document.getElementById('locTitle').innerText = "📍 GPS 未開啟";
+            });
+        }
+
+        async function loadList(locName) {
+            if(!locName) return;
+            const { data: items } = await supabase.from('inventory_summary')
+                .select('*').eq('location', locName).gt('current_stock', 0)
+                .order('expiry_date', { ascending: true });
+
+            document.getElementById('stockList').innerHTML = items.map(i => `
+                <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <b>${i.item_uuid.substring(0,12)}</b><br>
+                        <small class="${isNear(i.expiry_date) ? 'near-expiry' : ''}">
+                            效期: ${i.expiry_date}
+                        </small> (餘 ${i.current_stock})
+                    </div>
+                    <button class="btn-consume" onclick="doConsume('${i.item_uuid}', '${locName}')">銷帳 -1</button>
+                </div>
+            `).join('') || "此地目前無貨物";
+        }
+
+        async function doConsume(uuid, loc) {
+            if(!confirm('確認銷貨？')) return;
+            await fetch('/api/stock', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ item_uuid: uuid, from_loc: loc, to_loc: 'CONSUMED', operator: '現場銷貨' })
+            });
+            alert('✅ 已成功扣除，系統已自動銷帳');
+            loadList(loc);
+        }
+
+        function isNear(dateStr) {
+            const exp = new Date(dateStr);
+            const today = new Date();
+            return (exp - today) / (1000*60*60*24) < 30; // 30天內變紅
+        }
+
+        // Haversine 距離公式 (略，同之前代碼)
+        detect();
+    </script>
+</body>
+</html>

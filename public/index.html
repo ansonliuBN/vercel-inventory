@@ -1,133 +1,59 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>業務端倉儲系統-OCR暴力版</title>
-    <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; color: #333; }
-        .card { background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        button { background: #7360f2; color: white; border: none; padding: 15px; border-radius: 8px; cursor: pointer; width: 100%; font-size: 18px; font-weight: bold; }
-        #ocrStatus { margin-top: 15px; font-size: 14px; color: #666; line-height: 1.6; word-break: break-all; }
-        .preview-canvas { width: 100%; border: 1px solid #ddd; margin-top: 10px; border-radius: 8px; display: none; }
-    </style>
-</head>
-<body>
+<div class="card">
+    <h1>🏢 總公司倉庫</h1>
+    <div id="main-stock-display">載入中...</div>
+    <button onclick="location.href='scan.html'" style="background:#50c878;">📷 掃描新進貨物</button>
+</div>
 
-    <div class="card">
-        <h2>🏢 公司總倉現況</h2>
-        <div id="summary">連線中...</div>
+<div class="card">
+    <h2>📍 銷售據點管理</h2>
+    <div class="tabs">
+        <button onclick="switchLocation('LOC_A')">地點 A</button>
+        <button onclick="switchLocation('LOC_B')">地點 B</button>
     </div>
-
-    <div class="card">
-        <h2>📸 拍照辨識入庫</h2>
-        <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
-        <button onclick="document.getElementById('photoInput').click()">📷 點擊拍照 (請對準數字)</button>
-        <canvas id="debugCanvas" class="preview-canvas"></canvas>
-        <div id="ocrStatus">等待指令...</div>
+    <div id="location-inventory-list">
+        <p>請選擇上方地點查看清單</p>
     </div>
+</div>
 
-    <script src='https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js'></script>
-    <script>
-        const API_URL = '/api/stock';
-        const photoInput = document.getElementById('photoInput');
-        const ocrStatus = document.getElementById('ocrStatus');
+<script>
+    // 1. 抓取總表數據
+    async function fetchSummary() {
+        const res = await fetch('/api/stock');
+        const data = await res.json();
+        
+        // 渲染公司倉 (MAIN)
+        const main = data.filter(i => i.location === 'MAIN');
+        document.getElementById('main-stock-display').innerHTML = main.map(i => 
+            `<p>${i.item_uuid.substring(0,12)}... : <b>${i.current_stock}</b> 件</p>`
+        ).join('') || "目前無庫存";
+        
+        window.allData = data; // 暫存起來給切換地點用
+    }
 
-        photoInput.onchange = async function() {
-            const file = photoInput.files[0];
-            if (!file) return;
+    // 2. 切換地點顯示清單
+    function switchLocation(loc) {
+        const list = window.allData.filter(i => i.location === loc && i.current_stock > 0);
+        const container = document.getElementById('location-inventory-list');
+        
+        container.innerHTML = `<h3>${loc} 在庫清單</h3>` + list.map(i => `
+            <div class="stock-row">
+                <span>${i.item_uuid.substring(0,12)}</span>
+                <button onclick="doConsume('${i.item_uuid}', '${loc}')">銷帳 -1</button>
+            </div>
+        `).join('');
+    }
 
-            ocrStatus.innerHTML = "🌀 正在進行影像優化與暴力辨識...";
-            
-            try {
-                // 1. 影像預處理 (黑白 + 銳化)
-                const processedImageData = await preprocessImage(file);
-                
-                // 2. 執行辨識
-                const result = await Tesseract.recognize(processedImageData, 'eng', {
-                    logger: m => {
-                        if(m.status === 'recognizing text') ocrStatus.innerText = `辨識進度: ${Math.round(m.progress * 100)}%`;
-                    }
-                });
+    // 3. 銷帳動作
+    async function doConsume(uuid, loc) {
+        if(!confirm('確認消耗此物料？')) return;
+        await fetch('/api/stock', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ item_uuid: uuid, from_loc: loc, to_loc: 'CONSUMED', operator: '現場業務' })
+        });
+        alert('銷帳成功！');
+        location.reload(); // 重新整理
+    }
 
-                let text = result.data.text;
-                console.log("原始辨識結果:", text);
-
-                // 3. 暴力清理字串
-                let cleanText = text
-                    .replace(/\s+/g, '')       // 刪除空白
-                    .replace(/[\[\{]/g, '(')   // 修正括號誤讀
-                    .replace(/[\]\}]/g, ')')
-                    .replace(/O/g, '0')        // 修正數字誤讀
-                    .replace(/[Il|]/g, '1')
-                    .replace(/S/g, '5')
-                    .replace(/B/g, '8');
-
-                // 4. 解析 GS1-128 格式
-                // 產品碼(01), 效期(17), 序號(21)
-                const pCode = cleanText.match(/\(01\)(\d{13,14})/)?.[1];
-                const eDate = cleanText.match(/\(17\)(\d{6})/)?.[1];
-                const uuidMatch = cleanText.match(/\(21\)([A-Za-z0-9-]+)/)?.[1];
-                
-                // 只要 UUID 前 12 碼
-                const shortUuid = uuidMatch ? uuidMatch.substring(0, 12) : null;
-
-                if (shortUuid) {
-                    const info = `✅ 辨識成功！\n序號: ${shortUuid}\n效期: ${eDate || '未抓到'}\n產品碼: ${pCode || '未抓到'}`;
-                    ocrStatus.innerText = info;
-                    
-                    // 送往 API
-                    await sendToDatabase(shortUuid, pCode, eDate);
-                } else {
-                    ocrStatus.innerHTML = `❌ 無法精準解析。<br>抓到字串為: ${cleanText}<br>請重新拍攝，確保數字清晰且無反光。`;
-                }
-            } catch (err) {
-                ocrStatus.innerText = "出錯了: " + err.message;
-            }
-        };
-
-        async function sendToDatabase(uuid, pcode, edate) {
-            await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    item_uuid: uuid,
-                    product_code: pcode,
-                    expiry_date: edate,
-                    from_loc: 'FACTORY',
-                    to_loc: 'MAIN',
-                    operator: 'OCR_Mobile'
-                })
-            });
-            alert("資料已同步至 Supabase！");
-        }
-
-        async function preprocessImage(file) {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        const canvas = document.getElementById('debugCanvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        // 只取圖片中間 40% 的區域，減少干擾 (Crop)
-                        const cropHeight = img.height * 0.4;
-                        canvas.width = img.width;
-                        canvas.height = cropHeight;
-                        
-                        // 套用濾鏡：黑白 + 強烈對比
-                        ctx.filter = 'grayscale(100%) contrast(300%) brightness(110%)';
-                        ctx.drawImage(img, 0, img.height * 0.3, img.width, cropHeight, 0, 0, img.width, cropHeight);
-                        
-                        canvas.style.display = 'block'; // 顯示預覽圖方便除錯
-                        resolve(canvas.toDataURL('image/jpeg', 0.9));
-                    };
-                    img.src = e.target.result;
-                };
-                reader.readAsDataURL(file);
-            });
-        }
-    </script>
-</body>
-</html>
+    fetchSummary();
+</script>
