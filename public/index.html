@@ -38,29 +38,27 @@
 
             document.getElementById('ocrStatus').innerText = "辨識中，請稍候...";
 
-            // 使用 Tesseract.js 直接在瀏覽器辨識文字
-            Tesseract.recognize(file, 'eng', { 
-                logger: m => console.log(m),
-                // 關鍵設定：讓 OCR 嘗試不同的方向
-                rotateAuto: true, 
-                rotateDegrees: [0, 90, 180, 270] 
-            })
-                .then(async ({ data: { text } }) => {
-                    // 清理掉空格，方便 Regex 抓取
-                    const cleanText = text.replace(/[\s\[\{]/g, '(').replace(/[\]\}]/g, ')');
-                    document.getElementById('ocrStatus').innerText = "辨識結果: " + cleanText;
+            photoInput.onchange = async function() {
+            const file = photoInput.files[0];
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = async () => {
+                const base64Image = reader.result.split(',')[1];
+                document.getElementById('ocrStatus').innerText = "雲端辨識中...";
 
-                    // 送去後端拆解並存檔
-                    const res = await fetch('/api/stock', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ raw_text: cleanText, operator: 'OCR辨識' })
-                    });
-                    
-                    const result = await res.json();
-                    if (result.shortUuid) alert("入庫成功: " + result.shortUuid);
+                const res = await fetch('/api/stock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        image: base64Image, 
+                        operator: '雲端OCR' 
+                    })
                 });
+                const result = await res.json();
+                alert("結果：" + JSON.stringify(result));
+            };
         };
+    };
     </script>
 </body>
 </html>
