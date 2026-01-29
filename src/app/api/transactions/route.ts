@@ -4,7 +4,7 @@ import { requireApiKey } from "@/lib/requireApiKey";
 
 export const runtime = "nodejs";
 
-const CLEAN_PURPOSE = ["入庫", "出庫", "使用", "領用", "調撥", "盤點", "報廢"];
+const CLEAN_PURPOSES = ["入庫", "出庫", "使用", "領用", "調撥", "盤點", "報廢"];
 
 export async function GET(req: Request) {
   const deny = requireApiKey(req);
@@ -25,6 +25,7 @@ export async function GET(req: Request) {
     1000
   );
 
+  // ✅ 用 let（你要的 A）
   let query = supabaseAdmin
     .from("transaction_log")
     .select("*")
@@ -38,22 +39,15 @@ export async function GET(req: Request) {
   if (date_from) query = query.gte("record_date", date_from);
   if (date_to) query = query.lte("record_date", date_to);
 
-  // clean mode: 只要我們認得的 purpose
+  // ✅ clean mode：排除 place=IN/OUT/TRANSFER + 只保留 purpose_code 或 purpose 白名單
   if (mode === "clean") {
-    // 1) 先把明顯錯的 place 排掉（你現在看到 place="IN" 就是這種）
-    q = q.not("place", "in", '("IN","OUT","TRANSFER")');
+    query = query.not("place", "in", '("IN","OUT","TRANSFER")');
 
-    // 2) 只保留：purpose_code 有值 或 purpose 在白名單
-    // Supabase v2: 用 or() 做 OR 條件
-    q = q.or(
-      [
-        "purpose_code.not.is.null",
-        `purpose.in.(${CLEAN_PURPOSES.map((x) => `"${x}"`).join(",")})`,
-      ].join(",")
-    );
+    const purposeIn = `purpose.in.(${CLEAN_PURPOSES.map((x) => `"${x}"`).join(",")})`;
+    query = query.or(`purpose_code.not.is.null,${purposeIn}`);
   }
 
-  // keyword search
+  // keyword search（注意：這是另一個 or，會跟上面的條件一起疊加）
   if (q && q.trim()) {
     const s = q.trim();
     query = query.or(
