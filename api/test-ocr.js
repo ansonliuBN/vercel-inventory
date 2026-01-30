@@ -1,51 +1,35 @@
-// api/test-ocr.js
+// api/test-ocr.js (極簡除錯版)
 const sharp = require('sharp');
-const { createWorker } = require('tesseract.js');
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  // 增加這行：讓 Vercel 日誌能看到收到了請求
+  console.log("API 收到請求了！");
+
+  if (req.method !== 'POST') return res.status(405).send('只支援 POST');
 
   try {
-    const { image } = req.body; // Base64 string
+    const { image } = req.body;
+    if (!image) return res.status(400).json({ error: "沒收到圖片" });
+
     const buffer = Buffer.from(image.split(',')[1], 'base64');
 
-    // --- Sharp 預處理策略：產生三種測試版本 ---
-    // 1. 基本增強 (灰階 + 適度對比)
-    const imgBase = await sharp(buffer).grayscale().resize(1000).toBuffer();
-    
-    // 2. 極限對比 (二值化，專治反光)
-    const imgThreshold = await sharp(buffer)
+    // 只做最簡單的 Sharp 處理
+    const processed = await sharp(buffer)
       .grayscale()
-      .linear(1.5, -0.2) // 提高對比
-      .threshold(140)    // 純黑白
       .toBuffer();
 
-    // 3. 銳化版本 (專治模糊)
-    const imgSharp = await sharp(buffer)
-      .grayscale()
-      .sharpen({ sigma: 2 })
-      .toBuffer();
+    console.log("Sharp 處理成功！");
 
-    // --- 進行 Tesseract OCR (以第二個版本為例) ---
-    const worker = await createWorker('eng');
-    await worker.setParameters({
-      tessedit_char_whitelist: '0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-',
-      tessedit_pageseg_mode: '7',
-    });
-
-    const { data: { text } } = await worker.recognize(imgThreshold);
-    await worker.terminate();
-
-    // 將處理後的圖轉回 Base64 傳給前端 Debug
-    res.status(200).json({
-      rawText: text,
+    return res.status(200).json({
+      rawText: "API 測試連線成功",
       debugImages: {
-        base: imgBase.toString('base64'),
-        threshold: imgThreshold.toString('base64'),
-        sharp: imgSharp.toString('base64')
+        base: processed.toString('base64'),
+        threshold: processed.toString('base64'),
+        sharp: processed.toString('base64')
       }
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("API 發生錯誤:", err.message);
+    return res.status(500).json({ error: err.message });
   }
 }
