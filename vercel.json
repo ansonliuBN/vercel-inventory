@@ -2,7 +2,12 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/zxing_reader.wasm", "destination": "/zxing_reader.wasm" },
-    { "source": "/((?!api|zxing_reader.wasm).*).*", "destination": "/public/index.html" }
+
+    { "source": "/scan.html", "destination": "/scan.html" },
+    { "source": "/transfer.html", "destination": "/transfer.html" },
+    { "source": "/consume.html", "destination": "/consume.html" },
+
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
     "api/**/*.js": {
