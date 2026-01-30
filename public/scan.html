@@ -375,6 +375,29 @@
       setBusy(true);
       setStatus('🟣 start() 觸發了：準備開相機…');
 
+      // 診斷 1: 檢查套件有沒有讀到
+        if (!window.ZXingBrowser) {
+            alert("找不到 ZXing 資源！請檢查 script 標籤。");
+            setBusy(false);
+            return;
+        }
+
+        try {
+            setStatus('🎥 正在請求相機權限...');
+            // 診斷 2: 這裡最容易卡住，加一個超時彈窗
+            const cameraTest = setTimeout(() => {
+                alert("相機請求超時！請檢查手機是否彈出「允許使用相機」的視窗。");
+            }, 5000);
+
+            await openCameraRobust();
+            clearTimeout(cameraTest); // 成功就取消彈窗
+            
+            setStatus('✅ 相機啟動成功！');
+        } catch (e) {
+            alert("相機啟動失敗: " + e.message);
+            stopEverything();
+        }
+
       // 修正：相容不同版本的 ZXing 載入方式
       const ZXing = window.ZXingBrowser || window.ZXing;
         if (!ZXing) {
