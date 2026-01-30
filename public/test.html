@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Sharp + Tesseract Debug 測試工具</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; }
+        .debug-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 20px; }
+        .debug-card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
+        .debug-card img { width: 100%; border-radius: 4px; background: #eee; }
+        .result-box { margin-top: 20px; padding: 15px; background: #eef; border-radius: 8px; font-size: 1.2rem; font-weight: bold; color: #333; }
+        #loader { display: none; color: #7360f2; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🔍 Sharp + Tesseract 影像辨識 Debug</h2>
+    <p>上傳條碼照片，查看 Sharp 如何「修圖」給 Tesseract 看</p>
+    
+    <input type="file" id="fileInput" accept="image/*" onchange="startTest()">
+    <div id="loader">🔄 影像處理與 OCR 進行中...</div>
+
+    <div class="result-box">
+        辨識文字結果：<span id="ocrText">等待上傳...</span>
+    </div>
+
+    <div class="debug-grid">
+        <div class="debug-card">
+            <b>1. 基本增強 (Base)</b>
+            <img id="imgBase">
+            <p><small>灰階 + 縮放</small></p>
+        </div>
+        <div class="debug-card">
+            <b>2. 二值化 (Threshold)</b>
+            <img id="imgThreshold">
+            <p><small>過濾反光與雜訊</small></p>
+        </div>
+        <div class="debug-card">
+            <b>3. 銳化 (Sharpen)</b>
+            <img id="imgSharp">
+            <p><small>強化文字邊緣</small></p>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function startTest() {
+        const file = document.getElementById('fileInput').files[0];
+        if (!file) return;
+
+        const loader = document.getElementById('loader');
+        loader.style.display = 'block';
+
+        // 轉 Base64
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = async () => {
+            const base64 = reader.result;
+
+            try {
+                const res = await fetch('/api/test-ocr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: base64 })
+                });
+
+                const data = await res.json();
+                
+                // 顯示辨識文字
+                document.getElementById('ocrText').innerText = data.rawText || "未辨識到文字";
+                
+                // 顯示三張 Debug 影像
+                document.getElementById('imgBase').src = "data:image/jpeg;base64," + data.debugImages.base;
+                document.getElementById('imgThreshold').src = "data:image/jpeg;base64," + data.debugImages.threshold;
+                document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
+
+            } catch (err) {
+                alert("錯誤: " + err.message);
+            } finally {
+                loader.style.display = 'none';
+            }
+        };
+    }
+</script>
+
+</body>
+</html>
