@@ -15,6 +15,11 @@
   <pre id="out">頁面已載入\n</pre>
 
   <!-- ✅ 用你本地的 UMD -->
+  <script>
+    window.TESSERACT_WORKER_PATH = "/tesseract/worker.min.js";
+    window.TESSERACT_CORE_PATH   = "/tesseract/tesseract-core.wasm";
+    window.TESSERACT_LANG_PATH   = "/tessdata";
+  </script>
   <script src="/tesseract/tesseract.min.js"></script>
 
   <script>
