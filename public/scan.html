@@ -99,6 +99,19 @@
 
   <div id="status" style="margin-top:10px; font-size:13px; color:#888;"></div>
   <canvas id="workCanvas"></canvas>
+
+  <!-- ✅ Debug：顯示送進 OCR 的圖片 -->
+  <div id="debugWrap" style="display:none; margin-top:12px; text-align:left; background:#fff; border:1px dashed #bbb; border-radius:12px; padding:10px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <div style="font-weight:700; color:#444;">🧪 OCR Debug Preview（你看到的就是實際餵 OCR 的圖）</div>
+      <button id="btnToggleDebug" onclick="toggleDebug()" style="background:#333; color:#fff; border:none; padding:8px 12px; border-radius:8px; font-size:13px; cursor:pointer;">
+        隱藏/顯示
+      </button>
+    </div>
+
+    <div id="debugGrid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;"></div>
+  </div>
+
 </div>
 
 <!-- ✅ Tesseract.js v7 -->
@@ -111,6 +124,76 @@
   const workCanvas = document.getElementById('workCanvas');
   const ctx = workCanvas.getContext('2d');
   let stream = null;
+
+  // ============================
+  // Debug UI helpers (SHOW OCR images)
+  // ============================
+  let debugEnabled = true;
+
+  function toggleDebug() {
+    debugEnabled = !debugEnabled;
+    const wrap = document.getElementById("debugWrap");
+    wrap.style.display = debugEnabled ? "block" : "none";
+  }
+
+  function clearDebug() {
+    const grid = document.getElementById("debugGrid");
+    grid.innerHTML = "";
+  }
+
+  function addDebugImage(title, dataUrl, meta = "") {
+    if (!debugEnabled) return;
+
+    const wrap = document.getElementById("debugWrap");
+    wrap.style.display = "block";
+
+    const grid = document.getElementById("debugGrid");
+
+    const card = document.createElement("div");
+    card.style.border = "1px solid #eee";
+    card.style.borderRadius = "10px";
+    card.style.padding = "8px";
+    card.style.background = "#fafafa";
+
+    const h = document.createElement("div");
+    h.style.fontWeight = "700";
+    h.style.fontSize = "13px";
+    h.style.color = "#333";
+    h.innerText = title;
+
+    const m = document.createElement("div");
+    m.style.fontSize = "12px";
+    m.style.color = "#666";
+    m.style.marginTop = "4px";
+    m.innerText = meta;
+
+    const img = document.createElement("img");
+    img.src = dataUrl;
+    img.style.width = "100%";
+    img.style.borderRadius = "8px";
+    img.style.border = "1px solid #ddd";
+    img.style.marginTop = "8px";
+    img.style.objectFit = "contain";
+    img.loading = "lazy";
+
+    const a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = `${title}.jpg`;
+    a.innerText = "下載這張圖";
+    a.style.display = "inline-block";
+    a.style.marginTop = "8px";
+    a.style.fontSize = "12px";
+    a.style.color = "#2d9cdb";
+    a.style.textDecoration = "none";
+
+    card.appendChild(h);
+    card.appendChild(m);
+    card.appendChild(img);
+    card.appendChild(a);
+
+    grid.appendChild(card);
+  }
+
 
   // ============================
   // v7：Worker Singleton
@@ -323,7 +406,22 @@
     } else {
       const rect = getScanBoxRect(boxHRatio);
       const crop = cropCanvas(rect, scale);
+      const cropRawUrl = crop.toDataURL("image/jpeg", 0.92);
+
+      addDebugImage(
+        `${label} - Crop Raw`,
+        cropRawUrl,
+        `boxHRatio=${boxHRatio}, scale=${scale}, crop=${crop.width}x${crop.height}`
+      );
+
       const enhanced = enhanceForOcr(crop, contrast, threshold);
+      const enhancedUrl = enhanced.toDataURL("image/jpeg", 0.95);
+      addDebugImage(
+        `${label} - Crop Enhanced（送 OCR）`,
+        enhancedUrl,
+        `contrast=${contrast}, threshold=${threshold}, enhanced=${enhanced.width}x${enhanced.height}`
+      );
+
 
       // ✅ 太小就不要跑（避免 wasm: Image too small to scale）
       if (enhanced.width < 50 || enhanced.height < 20) {
@@ -335,6 +433,7 @@
 
     // ✅ OCR
     const foundText = await ocrBarcodeAutoRotate(targetDataUrl);
+    const nt = normalizeText(foundText);
     const ok = !!(foundText && normalizeText(foundText).includes("(01)") && normalizeText(foundText).includes("(17)"));
     return { ok, text: foundText, reason: ok ? "" : "NOT_FOUND_01_17" };
   }
@@ -348,6 +447,9 @@
 
     try {
       await drawBase64ToWorkCanvas(base64Img);
+      clearDebug();
+      addDebugImage("原圖（workCanvas）", workCanvas.toDataURL("image/jpeg", 0.92), `${workCanvas.width}x${workCanvas.height}`);
+
 
       // ✅ workCanvas 尺寸保護
       if (workCanvas.width < 50 || workCanvas.height < 50) {
