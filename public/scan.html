@@ -126,12 +126,43 @@
       } catch (e) { console.error(e); }
     }
 
+    // --- 修改後的完成邏輯：增加確認步驟 ---
     async function finish(text, method) {
+      // 1. 先停止相機，畫面定格
       scanning = false;
       stopEverything();
-      setStatus(`<b style="color:green">✅ 入庫成功 (${method})</b><br>${text}`);
-      alert(`已成功入庫！`);
-      location.href = 'index.html';
+
+      // 2. 解析資料給你看
+      const gs1 = parseGS1(text);
+      const displayMsg = `
+        <div style="text-align:left; background:#eef2ff; padding:15px; border-radius:10px; margin:10px 0;">
+          <b>辨識方式：</b>${method}<br>
+          <b>UUID：</b>${gs1.uuid}<br>
+          <b>有效日期：</b>${gs1.exp || '未偵測'}<br>
+          <b>原始碼：</b><small>${text}</small>
+        </div>
+      `;
+      
+      setStatus(`<b style="color:blue">🔍 辨識完成，請確認資料</b>${displayMsg}`);
+
+      // 3. 彈出確認視窗，你按了才入庫
+      if (confirm(`確認入庫這筆物料嗎？\nUUID: ${gs1.uuid}`)) {
+        setBusy(true);
+        setStatus('🚀 正在寫入資料庫...');
+        try {
+          await postToBackend(text, method);
+          alert('✅ 入庫成功！');
+          location.href = 'index.html'; // 成功才跳轉
+        } catch (e) {
+          setBusy(false);
+          setStatus(`<b style="color:red">❌ 入庫失敗：</b>${e.message}`);
+          alert('資料庫寫入失敗，請重試');
+        }
+      } else {
+        // 如果按取消，就恢復按鈕讓你重掃
+        setStatus('已取消入庫，可重新開啟相機');
+        btnStart.disabled = false;
+      }
     }
 
     function stopEverything() {
