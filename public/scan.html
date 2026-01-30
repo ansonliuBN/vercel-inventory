@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>智能辨識入庫 - Tesseract OCR 全強攻版（GS1-128/UDI）</title>
+
+<!-- ✅ 避免瀏覽器硬抓 /favicon.ico 造成 404 -->
+<link rel="icon" href="data:,">
+
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
@@ -85,7 +89,8 @@
     <select id="editQty">
       <option value="10">10</option><option value="20">20</option>
       <option value="30">30</option><option value="40">40</option>
-      <option value="50">50</option><option value="100">100</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
     </select>
 
     <button class="btn-import" onclick="finalSubmit()">✅ 確認資料，匯入庫存</button>
@@ -96,7 +101,7 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<!-- ✅ v7：只保留一個 CDN，避免重複載入造成不確定行為 -->
+<!-- ✅ Tesseract.js v7 -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"></script>
 
 <script>
@@ -108,10 +113,10 @@
   let stream = null;
 
   // ============================
-  // v7：Worker Singleton（只建立一次，避免每次 OCR 重建）
+  // v7：Worker Singleton
   // ============================
   const TESSERACT_V7_DIST = "https://cdn.jsdelivr.net/npm/tesseract.js@7/dist";
-  const TESSERACT_CORE_V7 = "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0"; // 若你要鎖版，可維持 7.0.0
+  const TESSERACT_CORE_V7 = "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0";
   let ocrWorker = null;
   let workerReady = false;
 
@@ -127,18 +132,11 @@
 
     document.getElementById('status').innerText = "🧠 初始化 OCR 引擎 (v7 worker)...";
 
-    // v7：用 worker API（官方建議）
     ocrWorker = await Tesseract.createWorker('eng', 1, {
-      // ✅ 明確指定 worker/core 來源，避免跨網域找不到 worker 或 wasm
       workerPath: `${TESSERACT_V7_DIST}/worker.min.js`,
       corePath: TESSERACT_CORE_V7,
-
-      // 可選：如果你想看 OCR 進度，可打開下面這段（目前只在需要時更新 status）
       logger: (m) => {
-        // m.status: "recognizing text" / "loading tesseract core" / ...
-        // m.progress: 0~1
         if (m && typeof m.progress === "number" && m.status) {
-          // 不要太吵：只顯示辨識階段的進度
           if (m.status.includes("recogniz")) {
             const pct = Math.round(m.progress * 100);
             document.getElementById('status').innerText = `🔎 OCR 辨識中... ${pct}%`;
@@ -151,11 +149,8 @@
     return ocrWorker;
   }
 
-  // 建議：離開頁面時釋放 worker（不影響你的流程，只是更乾淨）
   window.addEventListener("beforeunload", async () => {
-    try {
-      if (ocrWorker) await ocrWorker.terminate();
-    } catch (_) {}
+    try { if (ocrWorker) await ocrWorker.terminate(); } catch (_) {}
   });
 
   // ============================
@@ -197,14 +192,14 @@
   }
 
   // ============================
-  // Crop (依照你 scan-box 中間區域取樣)
+  // Crop helpers（可傳入 boxHRatio）
   // ============================
-  function getScanBoxRect() {
+  function getScanBoxRect(boxHRatio = 0.22) {
     const cw = workCanvas.width;
     const ch = workCanvas.height;
 
     const boxW = cw * 0.90;
-    const boxH = ch * 0.22;
+    const boxH = ch * boxHRatio;
 
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
     const y = Math.max(0, Math.floor((ch - boxH) / 2));
@@ -212,6 +207,7 @@
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
   }
 
+  // ✅ 防止產出 1px 圖：clamp + 最小尺寸保護
   function cropCanvas(rect, scale = 1.0) {
     const safeW = Math.max(10, Math.floor(rect.w * scale));
     const safeH = Math.max(10, Math.floor(rect.h * scale));
@@ -222,7 +218,6 @@
 
     const cctx = c.getContext("2d");
 
-    // clamp source rect
     const sx = Math.max(0, Math.min(workCanvas.width - 1, rect.x));
     const sy = Math.max(0, Math.min(workCanvas.height - 1, rect.y));
     const sw = Math.max(1, Math.min(workCanvas.width - sx, rect.w));
@@ -232,13 +227,12 @@
     return c;
   }
 
-
   function canvasToDataURL(canvas, quality = 0.95) {
     return canvas.toDataURL("image/jpeg", quality);
   }
 
   // ============================
-  // OCR 前處理：灰階 + 對比 + 二值化（免費強攻）
+  // OCR 前處理：灰階 + 對比 + 二值化
   // ============================
   function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
     const c = document.createElement("canvas");
@@ -263,7 +257,7 @@
   }
 
   // ============================
-  // 旋轉 base64
+  // 旋轉 dataURL
   // ============================
   function rotateDataUrl(dataUrl, deg) {
     return new Promise((resolve) => {
@@ -288,13 +282,12 @@
   }
 
   // ============================
-  // v7：OCR 暴力旋轉 + 關鍵字過濾（用 worker.recognize）
+  // v7：OCR 暴力旋轉 + 關鍵字過濾
   // ============================
   async function ocrBarcodeAutoRotate(inputDataUrl) {
     const angles = [0, 90, 180, 270];
     const worker = await getOcrWorker();
 
-    // ✅ 單次 job options（避免全域參數互相污染）
     const jobOptions = {
       tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
       tessedit_pageseg_mode: "7" // SINGLE_LINE
@@ -315,7 +308,39 @@
   }
 
   // ============================
-  // Main analysis
+  // ✅ 新增：單次策略執行（會先檢查太小不跑）
+  // ============================
+  async function runOneOcrStrategy({ label, boxHRatio, scale, contrast, threshold }) {
+    document.getElementById('status').innerText = `⌛ 準備 OCR：${label}...`;
+
+    let targetDataUrl = "";
+
+    if (boxHRatio === "FULL") {
+      // 整張圖
+      const fullDataUrl = workCanvas.toDataURL("image/jpeg", 0.92);
+      // FULL 就不做 enhance（避免把整張圖二值化得太兇）；你要也可開第二輪 enhance
+      targetDataUrl = fullDataUrl;
+    } else {
+      const rect = getScanBoxRect(boxHRatio);
+      const crop = cropCanvas(rect, scale);
+      const enhanced = enhanceForOcr(crop, contrast, threshold);
+
+      // ✅ 太小就不要跑（避免 wasm: Image too small to scale）
+      if (enhanced.width < 50 || enhanced.height < 20) {
+        return { ok: false, text: "", reason: `CROP_TOO_SMALL_${enhanced.width}x${enhanced.height}` };
+      }
+
+      targetDataUrl = canvasToDataURL(enhanced, 0.95);
+    }
+
+    // ✅ OCR
+    const foundText = await ocrBarcodeAutoRotate(targetDataUrl);
+    const ok = !!(foundText && normalizeText(foundText).includes("(01)") && normalizeText(foundText).includes("(17)"));
+    return { ok, text: foundText, reason: ok ? "" : "NOT_FOUND_01_17" };
+  }
+
+  // ============================
+  // Main analysis（含完整 fallback）
   // ============================
   async function triggerAnalysisFromBase64(base64Img) {
     loader.style.display = 'block';
@@ -323,17 +348,39 @@
 
     try {
       await drawBase64ToWorkCanvas(base64Img);
+
+      // ✅ workCanvas 尺寸保護
       if (workCanvas.width < 50 || workCanvas.height < 50) {
         throw new Error(`影像載入失敗或尺寸過小：${workCanvas.width}x${workCanvas.height}`);
       }
 
+      // 你的強攻策略：小框 → 大框 → 整張圖
+      const strategies = [
+        { label: "小框(0.22) + 放大2.6 + 二值化", boxHRatio: 0.22, scale: 2.6, contrast: 1.6, threshold: 170 },
+        { label: "大框(0.35) + 放大2.6 + 二值化", boxHRatio: 0.35, scale: 2.6, contrast: 1.6, threshold: 170 },
+        { label: "整張圖(保底)", boxHRatio: "FULL", scale: 1.0, contrast: 1.0, threshold: 170 }
+      ];
 
-      const rect = getScanBoxRect();
-      const crop = cropCanvas(rect, 2.6);
-      const enhanced = enhanceForOcr(crop, 1.6, 170);
-      const ocrTarget = canvasToDataURL(enhanced, 0.95);
+      let foundText = "";
+      let lastReason = "";
 
-      const foundText = await ocrBarcodeAutoRotate(ocrTarget);
+      for (const s of strategies) {
+        const r = await runOneOcrStrategy(s);
+
+        // 若 crop 太小，直接進下一策略（避免 1x36）
+        if (!r.ok && r.reason.startsWith("CROP_TOO_SMALL_")) {
+          lastReason = r.reason;
+          continue;
+        }
+
+        if (r.ok) {
+          foundText = r.text;
+          break;
+        }
+
+        lastReason = r.reason;
+      }
+
       const data = extractGS1Data(foundText);
 
       document.getElementById('editGtin').value = data.gtin;
@@ -345,7 +392,9 @@
       document.getElementById('reviewArea').style.display = 'block';
 
       document.getElementById('status').innerText =
-        (data.gtin && data.exp) ? "辨識完成，請複核資料。" : "⚠️ 未抓到完整 (01)/(17)，建議重拍或人工修正。";
+        (data.gtin && data.exp)
+          ? "辨識完成，請複核資料。"
+          : `⚠️ 未抓到完整 (01)/(17)，建議重拍或人工修正。（debug: ${lastReason || "UNKNOWN"}）`;
 
     } catch (err) {
       alert("辨識發生錯誤: " + err.message);
@@ -397,6 +446,12 @@
   }
 
   async function takeSnapshot() {
+    // ✅ 避免 video 還沒 ready 導致 0x0
+    if (!video.videoWidth || !video.videoHeight) {
+      alert("相機尚未就緒，請等畫面出現後再拍照");
+      return;
+    }
+
     workCanvas.width = video.videoWidth;
     workCanvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
