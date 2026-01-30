@@ -3,19 +3,19 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>業務端 - 掃描入庫（GS1/QR/DataMatrix + OCR）</title>
+<title>業務端 - 掃描入庫（按鈕啟動）</title>
 
 <style>
   body { font-family:-apple-system, sans-serif; padding:20px; background:#f4f4f9; color:#333; text-align:center; }
   .card { background:white; padding:20px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); }
   button { background:#7360f2; color:white; border:none; padding:16px; border-radius:10px; cursor:pointer; width:100%; font-size:16px; font-weight:bold; margin-top:10px; }
+  .secondary { background:#444; }
   .back-btn { background:#666; }
   .muted { color:#888; font-size:13px; margin:8px 0 12px; }
   #status { margin-top:12px; font-size:14px; color:#444; word-break:break-all; min-height:56px; }
   .spinner { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
 
-  /* Camera area */
   .camera-wrap{
     position: relative;
     width: 100%;
@@ -23,43 +23,26 @@
     overflow: hidden;
     border: 2px solid #7360f2;
     background:#000;
+    display:none; /* ✅ 一開始不顯示相機畫面 */
   }
-  video{
-    width:100%;
-    height:auto;
-    display:block;
-  }
+  video{ width:100%; height:auto; display:block; }
 
-  /* Scan overlay */
-  .overlay{
-    position:absolute;
-    inset:0;
-    pointer-events:none;
-  }
-  .mask{
-    position:absolute;
-    inset:0;
-    background: rgba(0,0,0,0.35);
-  }
+  .overlay{ position:absolute; inset:0; pointer-events:none; }
   .scan-box{
     position:absolute;
-    left:50%;
-    top:50%;
+    left:50%; top:50%;
     transform:translate(-50%,-50%);
     width:78%;
     height:42%;
-    border: 2px solid rgba(255,255,255,0.95);
-    border-radius: 14px;
-    box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+    border:2px solid rgba(255,255,255,0.95);
+    border-radius:14px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,0.35);
   }
-  .corner{
-    position:absolute; width:22px; height:22px; border:3px solid #00ffb3;
-  }
+  .corner{ position:absolute; width:22px; height:22px; border:3px solid #00ffb3; }
   .c1{left:-2px; top:-2px; border-right:none; border-bottom:none; border-radius:12px 0 0 0;}
   .c2{right:-2px; top:-2px; border-left:none; border-bottom:none; border-radius:0 12px 0 0;}
   .c3{left:-2px; bottom:-2px; border-right:none; border-top:none; border-radius:0 0 0 12px;}
   .c4{right:-2px; bottom:-2px; border-left:none; border-top:none; border-radius:0 0 12px 0;}
-
   .scan-line{
     position:absolute;
     left:6%;
@@ -77,7 +60,6 @@
     100%{ transform: translateY(0); }
   }
 
-  /* Debug canvas (used for rotation/OCR capture) */
   canvas#workCanvas { display:none; }
 </style>
 </head>
@@ -86,13 +68,15 @@
   <div class="card">
     <h2>📷 掃描入庫（GS1-128 / QR / DataMatrix）</h2>
     <div class="muted">
-      把條碼放進框內（建議距離 10–15cm、避免反光）。<br>
-      GS1-128 若是側放，系統會自動旋轉容錯。
+      按「開啟相機」才會開始掃描。<br>
+      建議距離 10–15cm、避免反光；GS1-128 側放也會自動旋轉容錯。
     </div>
+
+    <button id="btnStart">📸 開啟相機開始掃描</button>
+    <button id="btnStop" class="secondary" disabled>⛔ 停止掃描</button>
 
     <div class="camera-wrap" id="cameraWrap">
       <video id="video" autoplay muted playsinline></video>
-
       <div class="overlay">
         <div class="scan-box" id="scanBox">
           <div class="corner c1"></div>
@@ -105,19 +89,15 @@
     </div>
 
     <div class="spinner" id="spin"></div>
-    <div id="status">啟動相機中…</div>
+    <div id="status">尚未啟動</div>
 
-    <button id="btnRestart">🔄 重新開始掃描</button>
     <button class="back-btn" onclick="location.href='index.html'">⬅️ 回到總表</button>
 
-    <!-- 隱藏工作 canvas：用來截圖 / 旋轉 / OCR -->
     <canvas id="workCanvas"></canvas>
   </div>
 
-  <!-- OCR（fallback） -->
   <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
 
-  <!-- ZXing -->
   <script type="module">
     import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } 
       from "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm";
@@ -125,13 +105,13 @@
     const video = document.getElementById('video');
     const statusEl = document.getElementById('status');
     const spin = document.getElementById('spin');
-    const btnRestart = document.getElementById('btnRestart');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
     const cameraWrap = document.getElementById('cameraWrap');
     const scanBox = document.getElementById('scanBox');
     const workCanvas = document.getElementById('workCanvas');
     const workCtx = workCanvas.getContext('2d', { willReadFrequently: true });
 
-    // ✅ 支援多碼制：Code128(GS1-128), QR, DataMatrix
     const hints = new Map();
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
       BarcodeFormat.CODE_128,
@@ -148,12 +128,18 @@
     let rotateTryTimer = null;
     let ocrTimer = null;
 
-    // -------------------------
-    // GS1 parse (covers bracket & raw)
-    // -------------------------
+    function setStatus(html){ statusEl.innerHTML = html; }
+    function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
+
+    function stopAllTimers(){
+      if (watchdogTimer) clearInterval(watchdogTimer);
+      if (rotateTryTimer) clearInterval(rotateTryTimer);
+      if (ocrTimer) clearTimeout(ocrTimer);
+      watchdogTimer = rotateTryTimer = ocrTimer = null;
+    }
+
     function parseGS1(raw) {
       const s = String(raw || '').replace(/\s+/g, '').replace(/\((\d{2})\)/g, '$1');
-
       let i = 0;
       const out = {};
       const read = (n) => s.slice(i, i += n);
@@ -165,69 +151,39 @@
         if (ai === '01') out.gtin = read(14);
         else if (ai === '11') out.mfg = read(6);
         else if (ai === '17') out.exp = read(6);
-        else if (ai === '21') { // 可變長（序號）— 若你未來有 (21) 也吃得到
-          out.sn = s.slice(i);
-          break;
-        }
-        else if (ai === '10') { // 可變長（批號/LOT）
-          out.lot = s.slice(i);
-          break;
-        } else {
-          // 不認得就停（避免死循環）
-          break;
-        }
+        else if (ai === '21') { out.sn = s.slice(i); break; }
+        else if (ai === '10') { out.lot = s.slice(i); break; }
+        else break;
       }
 
-      // 你的 key 規則（如果有 21 用 21，沒有就用 10）
       const tail = (out.sn || out.lot || '');
       const serial8 = tail.replace(/-.+$/, '').slice(0, 8).toUpperCase();
       out.key = (out.mfg && out.exp && serial8) ? `${out.mfg}_${out.exp}_${serial8}` : '';
-
       return out;
     }
 
-    // -------------------------
-    // utilities
-    // -------------------------
-    function setStatus(html){ statusEl.innerHTML = html; }
-    function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
-
-    function stopAllTimers(){
-      if (watchdogTimer) clearInterval(watchdogTimer);
-      if (rotateTryTimer) clearInterval(rotateTryTimer);
-      if (ocrTimer) clearTimeout(ocrTimer);
-      watchdogTimer = rotateTryTimer = ocrTimer = null;
-    }
-
     function getScanRectOnVideo(){
-      // 取得 scanBox 在 cameraWrap 的相對位置（百分比）
       const wrapRect = cameraWrap.getBoundingClientRect();
       const boxRect = scanBox.getBoundingClientRect();
-
-      const x = (boxRect.left - wrapRect.left) / wrapRect.width;
-      const y = (boxRect.top - wrapRect.top) / wrapRect.height;
-      const w = boxRect.width / wrapRect.width;
-      const h = boxRect.height / wrapRect.height;
-
-      return { x, y, w, h };
+      return {
+        x: (boxRect.left - wrapRect.left) / wrapRect.width,
+        y: (boxRect.top - wrapRect.top) / wrapRect.height,
+        w: boxRect.width / wrapRect.width,
+        h: boxRect.height / wrapRect.height
+      };
     }
 
     function captureROIToCanvas(rotationDeg = 0){
-      // 把 video 畫到 canvas（只截 scan box 區域），並可旋轉
       const vw = video.videoWidth;
       const vh = video.videoHeight;
       if (!vw || !vh) return false;
 
       const roi = getScanRectOnVideo();
-
-      // ROI in video pixel coords
       const sx = Math.max(0, Math.floor(roi.x * vw));
       const sy = Math.max(0, Math.floor(roi.y * vh));
       const sw = Math.min(vw - sx, Math.floor(roi.w * vw));
       const sh = Math.min(vh - sy, Math.floor(roi.h * vh));
 
-      // 先裁切出 ROI 到一個暫存 canvas（用 workCanvas 直接處理）
-      // 旋轉後的 canvas 尺寸
       const rot = ((rotationDeg % 360) + 360) % 360;
       const outW = (rot === 90 || rot === 270) ? sh : sw;
       const outH = (rot === 90 || rot === 270) ? sw : sh;
@@ -238,13 +194,11 @@
       workCtx.save();
       workCtx.clearRect(0,0,outW,outH);
 
-      // 旋轉繪制
       if (rot === 0){
         workCtx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
       } else {
         workCtx.translate(outW/2, outH/2);
         workCtx.rotate(rot * Math.PI / 180);
-        // 旋轉後，原 ROI 畫在中心
         workCtx.drawImage(video, sx, sy, sw, sh, -sw/2, -sh/2, sw, sh);
       }
 
@@ -253,45 +207,37 @@
     }
 
     async function tryDecodeFromCanvasOnce(){
-      // 嘗試旋轉容錯 0/90/180/270
       const rotations = [0, 90, 180, 270];
-
       for (const rot of rotations){
         const ok = captureROIToCanvas(rot);
         if (!ok) continue;
 
-        // 用 dataURL 走 decode（簡單穩）
         const url = workCanvas.toDataURL('image/png', 1.0);
         try{
           const res = await reader.decodeFromImageUrl(url);
           return { text: res.getText(), rot };
-        }catch(e){
-          // continue
-        }
+        }catch(e){}
       }
       return null;
     }
 
-    // OCR fallback：只在 ROI 上跑，並加 whitelist 讓成功率高
     async function ocrFallbackFromCanvas(){
-      // 先做「偏文字」預處理：灰階 + 高對比
+      // OCR 走 0 度 ROI（你要更狠可以改成 4 角度都跑一次 OCR）
+      captureROIToCanvas(0);
+
+      // grayscale + contrast
       const imgData = workCtx.getImageData(0, 0, workCanvas.width, workCanvas.height);
       const data = imgData.data;
-
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i], g = data[i+1], b = data[i+2];
-        // grayscale
         let v = (r*0.299 + g*0.587 + b*0.114);
-        // contrast boost
         v = (v - 128) * 2.8 + 128;
-        // clamp
         v = Math.max(0, Math.min(255, v));
         data[i] = data[i+1] = data[i+2] = v;
       }
       workCtx.putImageData(imgData, 0, 0);
 
       const url = workCanvas.toDataURL('image/jpeg', 0.92);
-
       const res = await Tesseract.recognize(url, 'eng', {
         logger: m => {
           if (m.status === 'recognizing text') {
@@ -300,7 +246,6 @@
         }
       });
 
-      // 清理常見誤讀
       let clean = (res.data.text || '')
         .replace(/\s+/g, '')
         .replace(/[\[\{]/g, '(')
@@ -314,12 +259,7 @@
     }
 
     async function postToBackend({ rawText, formatNote }){
-      // GS1-128 走 parse；QR/DataMatrix 可能是自訂 payload
       const gs1 = parseGS1(rawText);
-
-      // 你的舊欄位需要 item_uuid / product_code / expiry_date
-      // - 若是 GS1：用 key/gtin/exp
-      // - 若是 QR/DataMatrix：就把整段當 item_uuid（你可自行改 mapping）
       const payload = {
         item_uuid: gs1.key || rawText,
         product_code: gs1.gtin || null,
@@ -338,17 +278,16 @@
       return { gs1, payload };
     }
 
-    // -------------------------
-    // Start live scanning
-    // -------------------------
     async function startScan(){
       stopAllTimers();
       setBusy(true);
       setStatus('🎥 啟動相機中…');
       scanning = true;
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+      cameraWrap.style.display = 'block';
 
       try{
-        // decodeFromVideoDevice：成功時 callback 會一直回來，我們抓到一次就 reset 停止
         await reader.decodeFromVideoDevice(
           null,
           video,
@@ -363,8 +302,14 @@
               setStatus(`✅ 已掃到資料，處理中…<br>${text}`);
 
               try{
-                // 直接送後端
                 const out = await postToBackend({ rawText: text, formatNote: 'LIVE_SCAN' });
+
+                reader.reset();
+                scanning = false;
+                stopAllTimers();
+                setBusy(false);
+                btnStart.disabled = false;
+                btnStop.disabled = true;
 
                 setStatus(
                   `<b style="color:green">✅ 入庫成功</b><br>` +
@@ -376,9 +321,6 @@
                   `${out.gs1.key ? `KEY: ${out.gs1.key}` : ''}`
                 );
 
-                reader.reset(); // 停止相機掃描
-                scanning = false;
-                setBusy(false);
                 alert('✅ 已入庫！');
 
               } catch(e){
@@ -388,15 +330,20 @@
             }
           }
         );
-
       } catch(e){
         setBusy(false);
-        setStatus(`<b style="color:red">❌ 相機啟動失敗</b><br>請確認使用 https/localhost，並允許相機權限。`);
         scanning = false;
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+        setStatus(`<b style="color:red">❌ 相機啟動失敗</b><br>請確認 https/localhost 並允許相機權限。`);
         return;
       }
 
-      // Watchdog：若 4 秒都掃不到 → 觸發「旋轉容錯解碼」每 1.2 秒試一次
+      lastSuccessAt = Date.now();
+      setBusy(false);
+      setStatus('✅ 相機已啟動，請把條碼放入框內');
+
+      // Watchdog：4 秒沒成功 → 旋轉容錯；10 秒後 OCR fallback
       watchdogTimer = setInterval(() => {
         if (!scanning) return;
 
@@ -415,13 +362,14 @@
                 lastSuccessAt = Date.now();
                 setStatus(`✅ 旋轉容錯解碼成功（rot=${found.rot}°）<br>${found.text}`);
 
-                // 送後端
                 const out = await postToBackend({ rawText: found.text, formatNote: `ROTATE_${found.rot}` });
 
                 reader.reset();
                 scanning = false;
                 stopAllTimers();
                 setBusy(false);
+                btnStart.disabled = false;
+                btnStop.disabled = true;
 
                 setStatus(
                   `<b style="color:green">✅ 入庫成功</b><br>` +
@@ -438,23 +386,16 @@
             }catch(_){}
           }, 1200);
 
-          // 若再過 10 秒仍然沒成功 → OCR fallback（只做一次）
           ocrTimer = setTimeout(async () => {
             if (!scanning) return;
+
             setBusy(true);
             setStatus('🧠 仍未成功，啟動 OCR fallback（讀人眼字串）…');
 
             try{
-              // OCR 也做旋轉容錯：先抓 0/90/180/270 最可能含文字的那張再 OCR
-              // 這裡簡化：直接用 0/90/180/270 試 decode 一輪失敗後，取 0 度畫面跑 OCR
-              captureROIToCanvas(0);
-
               const ocrText = await ocrFallbackFromCanvas();
-
-              // OCR 讀到括號版本也 OK（parseGS1 會處理）
               setStatus(`<b>OCR 讀到：</b><br>${ocrText}`);
 
-              // 最少要能解析出 key 或像你範例那種 (01)(11)(17)(10) 的結構
               const gs1 = parseGS1(ocrText);
               if (!gs1.key && !gs1.gtin && !gs1.exp) {
                 setBusy(false);
@@ -468,6 +409,8 @@
               scanning = false;
               stopAllTimers();
               setBusy(false);
+              btnStart.disabled = false;
+              btnStop.disabled = true;
 
               setStatus(
                 `<b style="color:green">✅ OCR 入庫成功</b><br>` +
@@ -488,22 +431,30 @@
           }, 10000);
         }
       }, 800);
-
-      // 初始給個時間戳
-      lastSuccessAt = Date.now();
-      setBusy(false);
-      setStatus('✅ 相機已啟動，請把條碼放入框內');
     }
 
-    btnRestart.onclick = () => {
-      try { reader.reset(); } catch(_){}
+    function stopScan(){
       scanning = false;
       stopAllTimers();
-      startScan();
-    };
+      try { reader.reset(); } catch(_){}
+      setBusy(false);
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+      setStatus('⛔ 已停止。按「開啟相機開始掃描」再啟動。');
 
-    // auto start
-    startScan();
+      // 可選：停止後隱藏畫面
+      cameraWrap.style.display = 'none';
+
+      // 停止相機串流（釋放鏡頭）
+      const stream = video.srcObject;
+      if (stream && stream.getTracks) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+      video.srcObject = null;
+    }
+
+    btnStart.onclick = startScan;
+    btnStop.onclick = stopScan;
   </script>
 
 </body>
