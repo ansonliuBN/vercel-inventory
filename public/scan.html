@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>智能辨識入庫 - ZXing-wasm優先 + Tesseract v7 OCR fallback（GS1-128/UDI）</title>
+<title>智能辨識入庫 - ZXing優先 + 全圖OCR旋轉保底（GS1-128/UDI）</title>
 
 <link rel="icon" href="data:,">
 
@@ -36,7 +36,7 @@
 
   .overlay { position:absolute; inset:0; pointer-events:none; }
 
-  /* ✅ 使用者對準的「長條框」(UI guide) */
+  /* 使用者對準的長條框（僅 UI guide） */
   .scan-box {
     position:absolute;
     left:50%;
@@ -109,6 +109,7 @@
     </div>
   </div>
 
+  <!-- 保留拍照按鈕 -->
   <button id="btnSnap" class="btn-snap" onclick="takeSnapshot()" style="display:none;">📸 點擊拍照並分析</button>
 
   <div class="loader" id="loader"></div>
@@ -134,7 +135,7 @@
         <img id="imgZxingFeed" alt="zxing feed">
       </div>
       <div class="debug-card">
-        <b>OCR_FEED_RAW（OCR 餵入）</b>
+        <b>OCR_FEED（旋轉後全圖OCR）</b>
         <img id="imgOcrRaw" alt="ocr raw">
       </div>
       <div class="debug-card">
@@ -143,11 +144,15 @@
       </div>
     </div>
 
-    <label>批號 (Lot/SN/UUID):</label>
-    <input type="text" id="editLot" placeholder="尚未偵測">
+    <!-- ✅ 新增：GTIN -->
+    <label>GTIN（(01) 後 14 碼；會寫入資料庫 item_uuid）：</label>
+    <input type="text" id="editGtin" placeholder="尚未偵測">
 
-    <label>有效日期 (格式: YYMMDD):</label>
+    <label>有效日期（(17) 後 6 碼 → 轉成 yyyy年mm月dd日）：</label>
     <input type="text" id="editExp" placeholder="尚未偵測">
+
+    <label>LOT / Serial（只抓 (21) 後面的值）：</label>
+    <input type="text" id="editLot" placeholder="尚未偵測">
 
     <label>入庫數量 (以 10 為單位):</label>
     <select id="editQty">
@@ -175,73 +180,28 @@
   const ctx = workCanvas.getContext('2d', { willReadFrequently: true });
   let stream = null;
 
-  // ===== ✅ Auto tracking controls =====
+  // ===== Auto tracking (ZXing only) =====
   let autoTimer = null;
   let autoBusy = false;
   let autoFound = false;
+  let zxingFailCount = 0;
   const AUTO_INTERVAL_MS = 280;
-  const AUTO_FAIL_BEFORE_BROADEN = 10; // ~2.8s
-  let autoFailCount = 0;
-
-  function stopStream() {
-    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(e) {}
-    stream = null;
-  }
-
-  function startAutoTrack() {
-    stopAutoTrack();
-    autoBusy = false;
-    autoFound = false;
-    autoFailCount = 0;
-
-    autoTimer = setInterval(async () => {
-      if (autoBusy || autoFound) return;
-      if (!video.videoWidth || !video.videoHeight) return;
-      if (document.getElementById('reviewArea').style.display === 'block') return;
-
-      autoBusy = true;
-      try {
-        workCanvas.width = video.videoWidth;
-        workCanvas.height = video.videoHeight;
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
-        ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-
-        const probe = await quickProbeZXingFromWorkCanvas();
-        if (probe && probe.raw && hasGS1Core(probe.raw)) {
-          autoFound = true;
-          stopAutoTrack();
-
-          const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
-          preview.src = base64;
-          prepareUIForAnalysis();
-
-          stopStream();
-          await triggerAnalysisFromBase64(base64);
-          return;
-        } else {
-          autoFailCount++;
-          if (autoFailCount < 3) setStatus("🔎 自動追蹤中…條碼放滿框內、避免反光。");
-          else if (autoFailCount < AUTO_FAIL_BEFORE_BROADEN) setStatus("🔎 追蹤中…可稍微靠近/移動讓條紋更清楚。");
-          else setStatus("🔎 追蹤加強中…（放大 ROI 再掃一次）");
-        }
-      } catch(e) {
-      } finally {
-        autoBusy = false;
-      }
-    }, AUTO_INTERVAL_MS);
-  }
-
-  function stopAutoTrack() {
-    if (autoTimer) clearInterval(autoTimer);
-    autoTimer = null;
-  }
+  const ZXING_FAIL_THRESHOLD_FOR_OCR = 3;
 
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
   function showSourcePill(source) {
     const pill = document.getElementById('sourcePill');
     pill.style.display = 'inline-block';
     pill.textContent = `SOURCE: ${source}`;
+  }
+
+  function stopStream() {
+    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(e) {}
+    stream = null;
+  }
+  function stopAutoTrack() {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
   }
 
   function fileToBase64(file) {
@@ -253,39 +213,61 @@
     });
   }
 
-  // ✅ 這版 normalize 不移除括號（保留給 debug/人看），但 GS1 判斷/抽取會另外做 compact
-  function normalizeText(raw) {
+  // ===== Text normalize / GS1 =====
+  function normalizeTextKeepParens(raw) {
     return (raw || "")
-      .replace(/\s+/g, '')
+      .replace(/\u00A0/g, " ")
+      .replace(/[ \t\r]+/g, " ")
+      .replace(/\n+/g, "\n")
       .replace(/[Il|]/g, '1')
       .replace(/O/g, '0');
   }
+  function compact(raw) {
+    return normalizeTextKeepParens(raw).replace(/\s+/g, '');
+  }
 
   function hasGS1Core(text) {
-    const s = normalizeText(text);
-    const has01 = /(?:\(?01\)?)(\d{14})/.test(s) || /01(\d{14})/.test(s);
-    const has17 = /(?:\(?17\)?)(\d{6})/.test(s)  || /17(\d{6})/.test(s);
+    const s = compact(text);
+    const has01 = /(?:\(?01\)?)(\d{14})/.test(s);
+    const has17 = /(?:\(?17\)?)(\d{6})/.test(s);
     return has01 && has17;
   }
 
-  // ✅ 更保守：lot/serial 抽取不要貪吃到後面
+  // ✅ 只抓 (21) 當 LOT/Serial；不再 fallback (10)
   function extractGS1Data(text) {
-    const s = normalizeText(text);
+    const s = compact(text);
 
     const m01 = s.match(/\(01\)(\d{14})/) || s.match(/01(\d{14})/);
     const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/);
 
-    // 可變長度：遇到下一個 AI (01/11/17/10/21) 就停（或遇到括號）
-    const m21 = s.match(/\(21\)([A-Z0-9\-]{1,40})/) || s.match(/21([A-Z0-9\-]{1,40})(?=(?:\(?01\)?|\(?11\)?|\(?17\)?|\(?10\)?|\(?21\)?|$))/);
-    const m10 = s.match(/\(10\)([A-Z0-9\-]{1,40})/) || s.match(/10([A-Z0-9\-]{1,40})(?=(?:\(?01\)?|\(?11\)?|\(?17\)?|\(?10\)?|\(?21\)?|$))/);
+    // (21) 可變長度：遇到下一個 AI 或結尾就停
+    const stop = "(?:\\(?01\\)?|\\(?11\\)?|\\(?17\\)?|\\(?10\\)?|\\(?21\\)?|$)";
+    const re21 = new RegExp("\\(21\\)([A-Z0-9\\-]{1,40})(?=" + stop + ")", "i");
+    const m21 = s.match(re21) || s.match(/21([A-Z0-9\-]{1,40})(?=(?:\(?01\)?|\(?11\)?|\(?17\)?|\(?10\)?|\(?21\)?|$))/i);
 
     return {
       gtin: m01 ? m01[1] : "",
       exp:  m17 ? m17[1] : "",
-      lot:  (m21 && m21[1]) ? m21[1] : ((m10 && m10[1]) ? m10[1] : "")
+      lot:  (m21 && m21[1]) ? m21[1] : ""
     };
   }
 
+  // ✅ 把 YYMMDD 轉成 yyyy年mm月dd日（預設 20YY）
+  function yymmddToZhDate(yymmdd) {
+    const v = (yymmdd || "").replace(/\D/g, "");
+    if (v.length !== 6) return "";
+    const yy = v.slice(0,2);
+    const mm = v.slice(2,4);
+    const dd = v.slice(4,6);
+
+    const year = 2000 + parseInt(yy, 10);
+    const m = parseInt(mm, 10);
+    const d = parseInt(dd, 10);
+    if (!Number.isFinite(year) || m < 1 || m > 12 || d < 1 || d > 31) return "";
+    return `${year}年${mm}月${dd}日`;
+  }
+
+  // ===== Canvas helpers =====
   function drawBase64ToWorkCanvas(base64) {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -304,9 +286,7 @@
     });
   }
 
-  function canvasToPreviewURL(canvas) {
-    return canvas.toDataURL("image/png");
-  }
+  function canvasToPreviewURL(canvas) { return canvas.toDataURL("image/png"); }
 
   function makeThumb(canvas, maxW=420, maxH=420) {
     const w = canvas.width, h = canvas.height;
@@ -322,30 +302,15 @@
     return c;
   }
 
-  // ✅ 這版關鍵：ROI 不要切太小
-  // - UI guide 仍然是 22% 高，但我們實際分析用「大ROI」：覆蓋條碼 + (01)(17)(21) 人眼字
-  // - center 跟 UI 一樣 0.52，但高度改成 0.46 (你可調 0.40~0.60)
   function getBigRoiRect(centerRatioY = 0.52) {
     const cw = workCanvas.width, ch = workCanvas.height;
-
-    const boxW = cw * 0.94;      // 幾乎全寬
-    const boxH = ch * 0.46;      // ✅ 大高度：同時吃條碼+文字（重點）
+    const boxW = cw * 0.94;
+    const boxH = ch * 0.46;
     const cx = cw * 0.5;
     const cy = ch * centerRatioY;
-
     const x = Math.max(0, Math.floor(cx - boxW / 2));
     const y = Math.max(0, Math.floor(cy - boxH / 2));
-
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
-  }
-
-  // ✅ 自動追蹤用多個大ROI（上中下），更不容易切掉文字
-  function getMultiBigRoiRects() {
-    return [
-      getBigRoiRect(0.44),
-      getBigRoiRect(0.52),
-      getBigRoiRect(0.60),
-    ];
   }
 
   function cropCanvas(rect, scale = 1.8) {
@@ -353,7 +318,6 @@
     c.width = Math.max(10, Math.floor(rect.w * scale));
     c.height = Math.max(10, Math.floor(rect.h * scale));
     const g = c.getContext("2d");
-
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
     g.imageSmoothingEnabled = false;
@@ -362,7 +326,6 @@
     const sy = Math.max(0, Math.min(workCanvas.height - 1, rect.y));
     const sw = Math.max(1, Math.min(workCanvas.width - sx, rect.w));
     const sh = Math.max(1, Math.min(workCanvas.height - sy, rect.h));
-
     g.drawImage(workCanvas, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return c;
   }
@@ -372,10 +335,8 @@
     c.width = Math.max(1, Math.floor(w));
     c.height = Math.max(1, Math.floor(h));
     const g = c.getContext('2d');
-
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
-
     g.imageSmoothingEnabled = false;
     g.drawImage(canvas, x, y, w, h, 0, 0, c.width, c.height);
     return c;
@@ -386,11 +347,9 @@
     const w = src.width, h = src.height;
     const c = document.createElement('canvas');
     const g = c.getContext('2d');
-
     if (deg % 180 !== 0) { c.width = h; c.height = w; } else { c.width = w; c.height = h; }
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
-
     g.imageSmoothingEnabled = false;
     g.translate(c.width/2, c.height/2);
     g.rotate(rad);
@@ -398,115 +357,69 @@
     return c;
   }
 
-  function canvasToJpegURL(canvas, q=0.92) {
-    return canvas.toDataURL("image/jpeg", q);
-  }
+  function canvasToJpegURL(canvas, q=0.92) { return canvas.toDataURL("image/jpeg", q); }
 
-  // ✅ ZXing 候選：不要再做「超扁長條」了
-  // 這版做「中間 60~80% 高度」的幾個重疊窗，保留足夠高度給 1D
-  function buildCode128Candidates(bigCrop) {
-    const W = bigCrop.width, H = bigCrop.height;
-
-    // 主窗：吃中間 78% 高度（避免上下雜訊過多，又不會太扁）
-    const roiW = Math.floor(W * 0.96);
-    const roiH = Math.floor(H * 0.78);
-    const left = Math.floor((W - roiW) / 2);
-
-    // 垂直滑動：重疊取樣，避免條碼/文字偏上偏下
-    const stepY = Math.max(1, Math.floor(H * 0.10));
-    const list = [];
-    for (let y=0; y<=Math.max(0, H - roiH); y+=stepY) {
-      list.push({ name:`WIN_Y${y}`, canvas: cropSub(bigCrop, left, y, roiW, roiH) });
-    }
-
-    // 保底：整張大ROI
-    list.unshift({ name:`FULL_BIG`, canvas: bigCrop });
-    return list;
-  }
-
-  // ===== ZXing =====
+  // ===== ZXing (fast) =====
   function ensureZXingWasmLoaded() {
     if (!window.ZXingWASM || typeof window.ZXingWASM.readBarcodes !== "function") {
       throw new Error("zxing-wasm 未載入成功（index.js）");
     }
   }
-
   async function prepareZXingReaderModuleOnce() {
     ensureZXingWasmLoaded();
     if (prepareZXingReaderModuleOnce._done) return;
     prepareZXingReaderModuleOnce._done = true;
-
     const ZX = window.ZXingWASM;
     ZX.prepareZXingModule({
       overrides: { locateFile: (path, prefix) => path.endsWith(".wasm") ? "/zxing_reader.wasm" : (prefix + path) },
       fireImmediately: true
     });
   }
-
   async function decodeBarcodeWithZXing(canvasForZXing) {
     await prepareZXingReaderModuleOnce();
     const g = canvasForZXing.getContext("2d", { willReadFrequently: true });
     const imgData = g.getImageData(0,0,canvasForZXing.width, canvasForZXing.height);
-
-    const results = await window.ZXingWASM.readBarcodes(imgData, {
-      tryHarder: true,
-      maxNumberOfSymbols: 2
-    });
-
+    const results = await window.ZXingWASM.readBarcodes(imgData, { tryHarder: true, maxNumberOfSymbols: 2 });
     if (!results || !results.length) return "";
-    // 有時候會回多個，挑最像 GS1 的
     for (const r of results) {
       const t = r?.text || "";
-      if (t && (hasGS1Core(t) || /(?:\(?01\)?\d{14})/.test(normalizeText(t)))) return t;
+      if (t && (hasGS1Core(t) || /(?:\(?01\)?\d{14})/.test(compact(t)))) return t;
     }
     return results[0].text || "";
   }
-
+  function buildCode128Candidates(bigCrop) {
+    const W = bigCrop.width, H = bigCrop.height;
+    const roiW = Math.floor(W * 0.96);
+    const roiH = Math.floor(H * 0.78);
+    const left = Math.floor((W - roiW) / 2);
+    const stepY = Math.max(1, Math.floor(H * 0.10));
+    const list = [];
+    for (let y=0; y<=Math.max(0, H - roiH); y+=stepY) {
+      list.push({ name:`WIN_Y${y}`, canvas: cropSub(bigCrop, left, y, roiW, roiH) });
+    }
+    list.unshift({ name:`FULL_BIG`, canvas: bigCrop });
+    return list;
+  }
   async function zxingScanBig(bigCrop, debug) {
     const candidates = buildCode128Candidates(bigCrop);
     const angles = [0, 90, 270, 180];
-
     for (const item of candidates) {
       for (const deg of angles) {
         const feed = (deg===0) ? item.canvas : rotateCanvas(item.canvas, deg);
         let t = "";
         try { t = await decodeBarcodeWithZXing(feed); } catch(e){ t = ""; }
-
         if (debug) debug.push(`[ZXING][${item.name}][${deg}] ${t ? t : "(empty)"}`);
-
         if (t && hasGS1Core(t)) {
           if (debug) debug.push(`[ZXING][BEST] ${item.name} @ ${deg}`);
           return { text:t, cand:item.name, deg, feedCanvas: feed };
         }
       }
     }
-
     if (debug) debug.push(`[ZXING][BEST] -`);
     return { text:"", cand:"", deg:null, feedCanvas:null };
   }
 
-  // ===== ✅ Fast probe (auto tracking): ZXing only, big ROI =====
-  async function quickProbeZXingFromWorkCanvas() {
-    const rects = getMultiBigRoiRects();
-
-    for (const r of rects) {
-      const bigCrop = cropCanvas(r, 1.5); // tracking 要快：scale 小一點
-      const z = await zxingScanBig(bigCrop, null);
-      if (z.text) return { raw: z.text };
-    }
-
-    // 追蹤加強：再放大一次中央 ROI
-    if (autoFailCount >= AUTO_FAIL_BEFORE_BROADEN) {
-      const bigRect = getBigRoiRect(0.52);
-      const bigCrop2 = cropCanvas(bigRect, 2.0);
-      const z2 = await zxingScanBig(bigCrop2, null);
-      if (z2.text) return { raw: z2.text };
-    }
-
-    return { raw: "" };
-  }
-
-  // ===== OCR fallback（只有 ZXing 全 fail 才跑）=====
+  // ===== OCR (full image rotate + regex) =====
   async function ensureTesseractLoaded() {
     if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
       throw new Error("Tesseract.js v7 未載入成功");
@@ -520,18 +433,15 @@
     ocrWorker = await Tesseract.createWorker("eng");
     return ocrWorker;
   }
-  function tooSmallForOCR(w,h){ return (w < 120 || h < 60); }
 
   function enhanceForOcr(baseCanvas, contrast=1.7, threshold=170) {
     const c = document.createElement("canvas");
     c.width = baseCanvas.width;
     c.height = baseCanvas.height;
     const g = c.getContext("2d");
-
     g.fillStyle = "#fff";
     g.fillRect(0,0,c.width,c.height);
     g.drawImage(baseCanvas, 0, 0);
-
     const img = g.getImageData(0,0,c.width,c.height);
     const d = img.data;
     for (let i=0;i<d.length;i+=4){
@@ -546,108 +456,109 @@
     return c;
   }
 
-  // ✅ OCR 候選：不要只抓下半帶了
-  // 這版直接 OCR 「整張大ROI」，再加兩個更聚焦的子區（上/下）當備援
-  function buildOcrCandidates(bigCrop) {
-    const W = bigCrop.width, H = bigCrop.height;
-    const list = [];
-
-    list.push({ name:"OCR_FULL_BIG", canvas: bigCrop });
-
-    // 上半（有時 GS1 AI 文字貼近條碼一側/上側）
-    list.push({ name:"OCR_TOP", canvas: cropSub(bigCrop, 0, 0, W, Math.floor(H*0.55)) });
-
-    // 下半（有時 AI 文字在下）
-    list.push({ name:"OCR_BOTTOM", canvas: cropSub(bigCrop, 0, Math.floor(H*0.40), W, Math.floor(H*0.60)) });
-
-    return list;
+  function downscaleIfNeeded(src, maxSide = 2200) {
+    const w = src.width, h = src.height;
+    const max = Math.max(w,h);
+    if (max <= maxSide) return src;
+    const scale = maxSide / max;
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.floor(w * scale));
+    c.height = Math.max(1, Math.floor(h * scale));
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0,0,c.width,c.height);
+    g.imageSmoothingEnabled = true;
+    g.drawImage(src, 0, 0, c.width, c.height);
+    return c;
   }
 
-  async function ocrFallbackText(bigCrop, debug) {
+  async function ocrFullImageRotate(workCanvasFull, debug) {
     const worker = await getOcrWorker();
-    const opts = {
-      tessedit_char_whitelist:"0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-      tessedit_pageseg_mode:"6" // 比 7 更能吃多行/多區
-    };
-    const angles = [0,90,180,270];
 
-    const cands = buildOcrCandidates(bigCrop);
-    for (const item of cands) {
-      if (tooSmallForOCR(item.canvas.width, item.canvas.height)) {
-        debug.push(`[OCR][${item.name}] SKIP too small ${item.canvas.width}x${item.canvas.height}`);
-        continue;
+    const opts = {
+      tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+      tessedit_pageseg_mode: "6"
+    };
+
+    // 全圖縮一下加速（不影響大部分標籤）
+    const base = downscaleIfNeeded(workCanvasFull, 2200);
+    const enhBase = enhanceForOcr(base, 1.7, 170);
+
+    const angles = [0, 90, 180, 270];
+
+    for (const deg of angles) {
+      const feedRaw = (deg===0) ? base : rotateCanvas(base, deg);
+      const feedEnh = (deg===0) ? enhBase : rotateCanvas(enhBase, deg);
+
+      // Debug preview
+      document.getElementById('imgOcrRaw').src = canvasToPreviewURL(makeThumb(feedRaw, 420, 420));
+      document.getElementById('imgOcrEnh').src = canvasToPreviewURL(makeThumb(feedEnh, 420, 420));
+
+      // RAW
+      setStatus(`🧾 OCR 全圖（RAW）${deg}°...`);
+      let textRaw = "";
+      try {
+        const ret = await worker.recognize(canvasToJpegURL(feedRaw, 0.95), opts);
+        textRaw = normalizeTextKeepParens(ret?.data?.text || "");
+      } catch(e) { textRaw = ""; }
+      debug.push(`[OCR][RAW][${deg}] ${compact(textRaw).slice(0,240)}${compact(textRaw).length>240?'...':''}`);
+      if (textRaw && hasGS1Core(textRaw)) {
+        debug.push(`[OCR][BEST] RAW @ ${deg}`);
+        return { text: textRaw, cand: `FULL_RAW`, deg };
       }
 
-      const enh = enhanceForOcr(item.canvas, 1.7, 170);
-
-      for (const variant of [
-        { v:"RAW", canvas:item.canvas },
-        { v:"ENH", canvas:enh }
-      ]) {
-        for (const deg of angles) {
-          const feed = (deg===0) ? variant.canvas : rotateCanvas(variant.canvas, deg);
-          const url = canvasToJpegURL(feed, 0.95);
-
-          let t = "";
-          try {
-            setStatus(`🧾 OCR fallback（${item.name}-${variant.v}）${deg}°...`);
-            const ret = await worker.recognize(url, opts);
-            t = normalizeText(ret?.data?.text || "");
-          } catch(e) { t = ""; }
-
-          debug.push(`[OCR][${item.name}][${variant.v}][${deg}] ${t ? t : "(empty)"}`);
-
-          // 只要看到 01/17 任一就先收，後面再用 extract 去拼
-          if (t && (/(?:\(?01\)?\d{14})/.test(t) || /(?:\(?17\)?\d{6})/.test(t))) {
-            debug.push(`[OCR][BEST] ${item.name}-${variant.v} @ ${deg}`);
-            return { text:t, cand:`${item.name}-${variant.v}`, deg, rawCanvas:item.canvas, enhCanvas:enh };
-          }
-        }
+      // ENH
+      setStatus(`🧾 OCR 全圖（ENH）${deg}°...`);
+      let textEnh = "";
+      try {
+        const ret = await worker.recognize(canvasToJpegURL(feedEnh, 0.95), opts);
+        textEnh = normalizeTextKeepParens(ret?.data?.text || "");
+      } catch(e) { textEnh = ""; }
+      debug.push(`[OCR][ENH][${deg}] ${compact(textEnh).slice(0,240)}${compact(textEnh).length>240?'...':''}`);
+      if (textEnh && hasGS1Core(textEnh)) {
+        debug.push(`[OCR][BEST] ENH @ ${deg}`);
+        return { text: textEnh, cand: `FULL_ENH`, deg };
       }
     }
 
     debug.push(`[OCR][BEST] -`);
-    return { text:"", cand:"", deg:null, rawCanvas:null, enhCanvas:null };
+    return { text:"", cand:"", deg:null };
   }
 
-  // ===== Main =====
-  async function analyzeFromWorkCanvas() {
+  // ===== Main analyze =====
+  async function analyzeFromWorkCanvas({ forceOcr=false } = {}) {
     loader.style.display = "block";
     const debug = [];
     debug.push(`WASM_URL: /zxing_reader.wasm`);
 
     document.getElementById('imgWorkThumb').src = canvasToPreviewURL(makeThumb(workCanvas, 420, 420));
 
-    // ✅ 正式分析：用「大ROI」
+    // 大ROI（ZXing 快速用）
     const rect = getBigRoiRect(0.52);
     const bigCrop = cropCanvas(rect, 2.0);
-
     document.getElementById('imgScanCrop').src = canvasToPreviewURL(makeThumb(bigCrop, 420, 420));
 
-    // 1) ZXing
-    setStatus("📡 ZXing：大ROI 掃描（保留高度，避免切太小）...");
-    const z = await zxingScanBig(bigCrop, debug);
-
-    if (z.text) {
-      document.getElementById('imgZxingFeed').src = canvasToPreviewURL(makeThumb(z.feedCanvas, 420, 420));
-      document.getElementById('imgOcrRaw').src = "";
-      document.getElementById('imgOcrEnh').src = "";
-
-      return {
-        source: `ZXING_${z.cand}_${z.deg}`,
-        raw: z.text,
-        data: extractGS1Data(z.text),
-        debug_text: debug.join("\n")
-      };
+    // 1) ZXing（除非 force OCR）
+    if (!forceOcr) {
+      setStatus("📡 ZXing：大ROI 掃描（快）...");
+      const z = await zxingScanBig(bigCrop, debug);
+      if (z.text) {
+        document.getElementById('imgZxingFeed').src = canvasToPreviewURL(makeThumb(z.feedCanvas, 420, 420));
+        document.getElementById('imgOcrRaw').src = "";
+        document.getElementById('imgOcrEnh').src = "";
+        return {
+          source: `ZXING_${z.cand}_${z.deg}`,
+          raw: z.text,
+          data: extractGS1Data(z.text),
+          debug_text: debug.join("\n")
+        };
+      }
     }
 
-    // 2) OCR fallback（整張大ROI）
-    setStatus("⚠️ ZXing 未解到，改用 OCR fallback（整張大ROI）...");
-    const o = await ocrFallbackText(bigCrop, debug);
-
+    // 2) OCR 全圖 + 旋轉（保底）
+    setStatus("⚠️ ZXing 未解到，改用 OCR 全圖旋轉保底...");
     document.getElementById('imgZxingFeed').src = "";
-    if (o.rawCanvas) document.getElementById('imgOcrRaw').src = canvasToPreviewURL(makeThumb(o.rawCanvas, 420, 420));
-    if (o.enhCanvas) document.getElementById('imgOcrEnh').src = canvasToPreviewURL(makeThumb(o.enhCanvas, 420, 420));
+    const o = await ocrFullImageRotate(workCanvas, debug);
 
     return {
       source: o.text ? `OCR_${o.cand}_${o.deg}` : "OCR_NONE",
@@ -657,13 +568,13 @@
     };
   }
 
-  async function triggerAnalysisFromBase64(base64) {
+  async function triggerAnalysisFromBase64(base64, { forceOcr=false } = {}) {
     loader.style.display = 'block';
     setStatus("⌛ 正在準備分析...");
 
     await drawBase64ToWorkCanvas(base64);
 
-    const result = await analyzeFromWorkCanvas();
+    const result = await analyzeFromWorkCanvas({ forceOcr });
     const data = result.data || { gtin:"", exp:"", lot:"" };
 
     document.getElementById('rawAll').value =
@@ -675,19 +586,89 @@
 
     showSourcePill(result.source);
 
-    document.getElementById('editLot').value =
-      data.lot || normalizeText(result.raw).replace(/[^A-Za-z0-9]/g, '').substring(0, 32);
-
-    document.getElementById('editExp').value = data.exp || "";
+    // ✅ 你要的欄位：
+    // - GTIN(01) 後面 14 碼 → editGtin → 最後寫入 item_uuid
+    // - EXP(17) 6 碼 → 轉 yyyy年mm月dd日 → editExp
+    // - LOT(21) → editLot
+    document.getElementById('editGtin').value = data.gtin || "";
+    document.getElementById('editExp').value  = data.exp ? yymmddToZhDate(data.exp) : "";
+    document.getElementById('editLot').value  = data.lot || "";
 
     loader.style.display = 'none';
     document.getElementById('reviewArea').style.display = 'block';
 
+    const ok = (document.getElementById('editGtin').value && document.getElementById('editExp').value);
     setStatus(
-      (document.getElementById('editLot').value || data.exp)
+      ok
         ? `辨識完成（來源：${result.source}），請複核資料。`
-        : `⚠️ 未抓到完整資訊，建議重拍或人工修正。（來源：${result.source}）`
+        : `⚠️ 未抓到完整 GTIN/EXP，建議重拍或人工修正。（來源：${result.source}）`
     );
+  }
+
+  // ===== Auto tracking loop (ZXing only; OCR after 3 fails -> auto pop review) =====
+  function startAutoTrack() {
+    stopAutoTrack();
+    autoBusy = false;
+    autoFound = false;
+    zxingFailCount = 0;
+
+    autoTimer = setInterval(async () => {
+      if (autoBusy || autoFound) return;
+      if (!video.videoWidth || !video.videoHeight) return;
+      if (document.getElementById('reviewArea').style.display === 'block') return;
+
+      autoBusy = true;
+      try {
+        // capture current frame
+        workCanvas.width = video.videoWidth;
+        workCanvas.height = video.videoHeight;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
+        ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+
+        // quick try ZXing
+        const rect = getBigRoiRect(0.52);
+        const bigCrop = cropCanvas(rect, 1.5);
+
+        let zText = "";
+        try {
+          const z = await zxingScanBig(bigCrop, null);
+          zText = z?.text || "";
+        } catch(e) { zText = ""; }
+
+        if (zText && hasGS1Core(zText)) {
+          autoFound = true;
+          stopAutoTrack();
+          const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
+          preview.src = base64;
+          prepareUIForAnalysis();
+
+          stopStream();
+          await triggerAnalysisFromBase64(base64, { forceOcr:false });
+          return;
+        }
+
+        zxingFailCount++;
+        if (zxingFailCount < ZXING_FAIL_THRESHOLD_FOR_OCR) {
+          setStatus(`🔎 自動追蹤中…（ZXing 失敗 ${zxingFailCount}/${ZXING_FAIL_THRESHOLD_FOR_OCR}）條碼放滿框、避免反光。`);
+        } else {
+          // ✅ ZXing 連續失敗 3 次 → 直接跑 OCR 保底，命中就自動彈出複核
+          setStatus("🧾 ZXing 連續失敗，改用 OCR 全圖保底中…");
+          autoFound = true;
+          stopAutoTrack();
+
+          const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
+          preview.src = base64;
+          prepareUIForAnalysis();
+
+          stopStream();
+          await triggerAnalysisFromBase64(base64, { forceOcr:true });
+          return;
+        }
+      } finally {
+        autoBusy = false;
+      }
+    }, AUTO_INTERVAL_MS);
   }
 
   // ===== Camera / UI =====
@@ -705,7 +686,7 @@
       video.style.display = 'block';
       preview.style.display = 'none';
 
-      setStatus("🔎 自動追蹤中：條碼對準長條框即可（這版分析用更大的ROI，不怕上下多吃到背景）。你也可按拍照。");
+      setStatus("🔎 自動追蹤中：先跑 ZXing；連續失敗 3 次會自動改 OCR 保底並彈出複核。也可按拍照。");
       startAutoTrack();
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
@@ -718,7 +699,7 @@
     const base64 = await fileToBase64(file);
     preview.src = base64;
     prepareUIForAnalysis();
-    try { await triggerAnalysisFromBase64(base64); }
+    try { await triggerAnalysisFromBase64(base64, { forceOcr:true }); } // 上傳直接用 OCR 保底比較穩
     catch(err){ alert("辨識發生錯誤: " + err.message); location.reload(); }
   }
 
@@ -741,13 +722,12 @@
 
     preview.src = base64;
     prepareUIForAnalysis();
-    try { await triggerAnalysisFromBase64(base64); }
+    try { await triggerAnalysisFromBase64(base64, { forceOcr:false }); }
     catch(err){ alert("辨識發生錯誤: " + err.message); location.reload(); }
   }
 
   function prepareUIForAnalysis() {
     stopAutoTrack();
-
     video.style.display = 'none';
     preview.style.display = 'block';
     document.getElementById('displayArea').style.display = 'block';
@@ -760,9 +740,19 @@
   // ===== Submit =====
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
+
+    // ✅ 你指定：GTIN 要塞進資料庫 item_uuid
+    const gtin = (document.getElementById('editGtin').value || "").trim();
+    const expZh = (document.getElementById('editExp').value || "").trim();
+    const lot21 = (document.getElementById('editLot').value || "").trim();
+
+    if (!gtin) { alert("❗ GTIN (01) 不能空白"); return; }
+    if (!expZh) { alert("❗ 有效日期不能空白"); return; }
+
     const payload = {
-      item_uuid: document.getElementById('editLot').value,
-      expiry_date: document.getElementById('editExp').value,
+      item_uuid: gtin,
+      expiry_date: expZh,        // yyyy年mm月dd日
+      lot_21: lot21,             // 你如果後端沒收也沒關係（可留作擴充）
       quantity: qty,
       from_loc: 'FACTORY', to_loc: 'MAIN', operator: 'MANUAL_REVIEW'
     };
