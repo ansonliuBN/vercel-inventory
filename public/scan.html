@@ -507,6 +507,25 @@
     );
   }
 
+  // ✅ for <input type="file" onchange="handleFileUpload(event)">
+  async function handleFileUpload(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const base64 = await fileToBase64(file);
+
+    preview.src = base64;
+    prepareUIForAnalysis();
+
+    try {
+      await triggerAnalysisFromBase64(base64);
+    } catch (err) {
+      alert("辨識發生錯誤: " + (err && err.message ? err.message : String(err)));
+      location.reload();
+    }
+  }
+
+
   // ============================
   // Camera / UI
   // ============================
