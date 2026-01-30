@@ -127,6 +127,20 @@
     // ---------- UI helpers ----------
     function setStatus(html){ statusEl.innerHTML = html; }
     function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
+    // ✅ 任何 JS 錯誤都直接印在畫面上
+    window.onerror = function(message, source, lineno, colno, error) {
+        setBusy(false);
+        setStatus(
+        `<b style="color:red">❌ JS Error</b><br>` +
+        `${message}<br>` +
+        `<small>${source || ''}:${lineno || ''}:${colno || ''}</small>`
+        );
+    };
+
+    // ✅ 一載入就要看得到這句（看不到 = 你這份 HTML 根本不是你以為的版本 / script 沒跑）
+    setStatus('✅ JS 已載入，請按「開啟相機」');
+
+
     function stopAllTimers(){
       if (watchdogTimer) clearInterval(watchdogTimer);
       if (rotateTryTimer) clearInterval(rotateTryTimer);
@@ -193,6 +207,26 @@
       });
       video.srcObject = stream;
       await video.play();
+    }
+
+    function stopAll(){
+      scanning = false;
+      try{ if (controls && controls.stop) controls.stop(); }catch(e){}
+      controls = null;
+      try{ if (reader && reader.reset) reader.reset(); }catch(e){}
+      reader = null;
+
+      try{
+        const s = video.srcObject || stream;
+        if (s && s.getTracks) s.getTracks().forEach(t => t.stop());
+      }catch(e){}
+      stream = null;
+      video.srcObject = null;
+      cameraWrap.style.display = 'none';
+
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+      setBusy(false);
     }
 
     function closeCamera(){
@@ -305,6 +339,8 @@
 
     // ---------- start/stop ----------
     async function start(){
+      setBusy(true);
+      setStatus('🟣 start() 觸發了：準備開相機…');
       if (!window.ZXingBrowser) {
         setStatus('<b style="color:red">❌ ZXing 未載入</b><br>請確認 /libs/zxing/zxing-browser.min.js 存在並可被存取');
         return;
