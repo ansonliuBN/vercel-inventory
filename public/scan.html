@@ -175,6 +175,82 @@
   const ctx = workCanvas.getContext('2d', { willReadFrequently: true });
   let stream = null;
 
+  // ===== ✅ Auto tracking controls =====
+  let autoTimer = null;
+  let autoBusy = false;      // avoid concurrent zxing calls
+  let autoFound = false;     // stop after success
+  const AUTO_INTERVAL_MS = 280;
+  const AUTO_FAIL_BEFORE_BROADEN = 12; // ~3.3s
+  let autoFailCount = 0;
+
+  function stopStream() {
+    try {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+    } catch(e) {}
+    stream = null;
+  }
+
+  function startAutoTrack() {
+    stopAutoTrack();
+    autoBusy = false;
+    autoFound = false;
+    autoFailCount = 0;
+
+    autoTimer = setInterval(async () => {
+      if (autoBusy || autoFound) return;
+      if (!video.videoWidth || !video.videoHeight) return;
+      if (document.getElementById('reviewArea').style.display === 'block') return;
+
+      autoBusy = true;
+      try {
+        // draw current frame to workCanvas
+        workCanvas.width = video.videoWidth;
+        workCanvas.height = video.videoHeight;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
+        ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+
+        // Fast ZXing-only probe (no OCR) to keep tracking snappy
+        const probe = await quickProbeZXingFromWorkCanvas();
+
+        if (probe && probe.raw && hasGS1Core(probe.raw)) {
+          autoFound = true;
+          stopAutoTrack();
+
+          // freeze frame as base64 and jump to review
+          const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
+          preview.src = base64;
+
+          prepareUIForAnalysis();
+
+          // optional: stop camera to release it
+          stopStream();
+
+          // now run full pipeline (ZXing first, OCR fallback) to populate fields/debug
+          await triggerAnalysisFromBase64(base64);
+          return;
+        } else {
+          autoFailCount++;
+          // Status hints
+          if (autoFailCount < 3) setStatus("🔎 自動追蹤中…請把條碼『橫放』對準長條框，靠近一點、避反光。");
+          else if (autoFailCount < AUTO_FAIL_BEFORE_BROADEN) setStatus("🔎 還在追蹤…可稍微左右移動/調整距離，讓條碼更清晰。");
+          else setStatus("🔎 追蹤加強中…（嘗試更大範圍掃描）");
+        }
+      } catch(e) {
+        // ignore transient errors during tracking
+      } finally {
+        autoBusy = false;
+      }
+    }, AUTO_INTERVAL_MS);
+  }
+
+  function stopAutoTrack() {
+    if (autoTimer) clearInterval(autoTimer);
+    autoTimer = null;
+  }
+
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
   function showSourcePill(source) {
     const pill = document.getElementById('sourcePill');
@@ -225,7 +301,6 @@
         workCanvas.width = img.width;
         workCanvas.height = img.height;
 
-        // ✅ 先鋪白底（避免透明→jpeg 黑底、也避免某些 drawImage 邊界透明）
         ctx.save();
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
@@ -239,7 +314,6 @@
     });
   }
 
-  // ✅ debug 預覽一律用 PNG（透明不會變黑）
   function canvasToPreviewURL(canvas) {
     return canvas.toDataURL("image/png");
   }
@@ -258,14 +332,29 @@
     return c;
   }
 
-  // ✅ 以「長條框」為主：高度較扁（你指定偏向長條）
-  function getScanBoxRect() {
+  // ✅ ROI：跟 UI 框一致（top:52%, width:92%, height:22%）
+  function getScanBoxRectAt(centerRatioY = 0.52) {
     const cw = workCanvas.width, ch = workCanvas.height;
     const boxW = cw * 0.92;
     const boxH = ch * 0.22;
-    const x = Math.max(0, Math.floor((cw - boxW) / 2));
-    const y = Math.max(0, Math.floor((ch - boxH) / 2));
+
+    const cx = cw * 0.5;
+    const cy = ch * centerRatioY;
+
+    const x = Math.max(0, Math.floor(cx - boxW / 2));
+    const y = Math.max(0, Math.floor(cy - boxH / 2));
+
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
+  }
+
+  // ✅ 多 ROI：中/上/下（自動追蹤更穩）
+  function getMultiScanRects() {
+    // 你可以依需求微調這三個中心點
+    return [
+      getScanBoxRectAt(0.42),
+      getScanBoxRectAt(0.52),
+      getScanBoxRectAt(0.62),
+    ];
   }
 
   function cropCanvas(rect, scale = 2.6) {
@@ -274,7 +363,6 @@
     c.height = Math.max(10, Math.floor(rect.h * scale));
     const g = c.getContext("2d");
 
-    // ✅ 先鋪白底，避免透明
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
 
@@ -295,7 +383,6 @@
     c.height = Math.max(1, Math.floor(h));
     const g = c.getContext('2d');
 
-    // ✅ 先鋪白底，避免透明
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
 
@@ -310,7 +397,6 @@
     const c = document.createElement('canvas');
     const g = c.getContext('2d');
 
-    // ✅ 先鋪白底，避免旋轉後四角透明
     if (deg % 180 !== 0) { c.width = h; c.height = w; } else { c.width = w; c.height = h; }
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
@@ -323,19 +409,15 @@
   }
 
   function canvasToJpegURL(canvas, q=0.92) {
-    // OCR/ZXing 走 jpeg 也行，但預覽用 png
     return canvas.toDataURL("image/jpeg", q);
   }
 
-  // ✅ 長條 ROI 掃描（重疊 + padding）
   function buildLongBarCandidates(scanCrop) {
     const W = scanCrop.width, H = scanCrop.height;
 
-    // ROI 形狀：偏長條（適合條碼）
     const roiW = Math.floor(W * 0.92);
-    const roiH = Math.floor(H * 0.78);          // 多吃高度，避免切到邊緣
-    const stepY = Math.max(1, Math.floor(H * 0.10)); // 小步伐重疊
-
+    const roiH = Math.floor(H * 0.78);
+    const stepY = Math.max(1, Math.floor(H * 0.10));
     const left = Math.floor((W - roiW) / 2);
 
     const list = [];
@@ -343,14 +425,11 @@
       list.push({ name:`BAR_Y${y}`, canvas: cropSub(scanCrop, left, y, roiW, roiH) });
     }
 
-    // padding：更高一點的中心 ROI
     const padH = Math.min(H, Math.floor(roiH * 1.18));
     const padY = Math.max(0, Math.floor((H - padH) / 2));
     list.unshift({ name:`BAR_PAD_CENTER`, canvas: cropSub(scanCrop, left, padY, roiW, padH) });
 
-    // 保底：整張 scanCrop
     list.unshift({ name:`FULL`, canvas: scanCrop });
-
     return list;
   }
 
@@ -392,18 +471,41 @@
         let t = "";
         try { t = await decodeBarcodeWithZXing(feed); } catch(e){ t = ""; }
 
-        debug.push(`[ZXING][${item.name}][${deg}] ${t ? t : "(empty)"}`);
+        if (debug) debug.push(`[ZXING][${item.name}][${deg}] ${t ? t : "(empty)"}`);
 
-        // ✅ 只接受像 GS1 的結果
         if (t && hasGS1Core(t)) {
-          debug.push(`[ZXING][BEST] ${item.name} @ ${deg}`);
+          if (debug) debug.push(`[ZXING][BEST] ${item.name} @ ${deg}`);
           return { text:t, cand:item.name, deg, feedCanvas: feed };
         }
       }
     }
 
-    debug.push(`[ZXING][BEST] -`);
+    if (debug) debug.push(`[ZXING][BEST] -`);
     return { text:"", cand:"", deg:null, feedCanvas:null };
+  }
+
+  // ===== ✅ Fast probe: only ZXing, multi ROI, optionally broaden =====
+  async function quickProbeZXingFromWorkCanvas() {
+    // no loader, no debug images, keep it light
+    const rects = getMultiScanRects();
+    const debug = null;
+
+    // Phase A: standard ROI scan
+    for (const r of rects) {
+      const scanCrop = cropCanvas(r, 2.2); // slightly lower scale for speed in tracking
+      const z = await zxingScanLongBar(scanCrop, debug);
+      if (z.text) return { raw: z.text };
+    }
+
+    // Phase B: if many fails, broaden area (bigger scale & also middle-only but bigger)
+    if (autoFailCount >= AUTO_FAIL_BEFORE_BROADEN) {
+      const bigRect = getScanBoxRectAt(0.52);
+      const bigCrop = cropCanvas(bigRect, 3.0);
+      const z2 = await zxingScanLongBar(bigCrop, debug);
+      if (z2.text) return { raw: z2.text };
+    }
+
+    return { raw: "" };
   }
 
   // ===== OCR fallback（只有 ZXing 全 fail 才跑）=====
@@ -428,7 +530,6 @@
     c.height = baseCanvas.height;
     const g = c.getContext("2d");
 
-    // white bg
     g.fillStyle = "#fff";
     g.fillRect(0,0,c.width,c.height);
     g.drawImage(baseCanvas, 0, 0);
@@ -447,14 +548,10 @@
     return c;
   }
 
-  // ✅ OCR：用「長條內的下方細帶」當文字候選（偏向引導拍法）
   function buildTextBandCandidates(scanCrop) {
     const W = scanCrop.width, H = scanCrop.height;
-
-    // 文字通常在條碼下方：取下 45% 當文字帶（稍加大）
     const bandY = Math.floor(H * 0.52);
     const bandH = Math.max(1, Math.floor(H * 0.48));
-
     const c = cropSub(scanCrop, 0, bandY, W, bandH);
     return [{ name:"TEXT_BAND", canvas: c }];
   }
@@ -508,16 +605,14 @@
     const debug = [];
     debug.push(`WASM_URL: /zxing_reader.wasm`);
 
-    // 先放 workCanvas thumb，確認 canvas 真的有內容
     document.getElementById('imgWorkThumb').src = canvasToPreviewURL(makeThumb(workCanvas, 420, 420));
 
-    const rect = getScanBoxRect();
+    // ✅ 用「中央 ROI」做正式分析（auto track 成功後也會走這條，debug 圖一致）
+    const rect = getScanBoxRectAt(0.52);
     const scanCrop = cropCanvas(rect, 2.6);
 
-    // debug images
     document.getElementById('imgScanCrop').src = canvasToPreviewURL(makeThumb(scanCrop, 420, 420));
 
-    // 1) ZXing：長條 ROI 掃描 + 旋轉
     setStatus("📡 ZXing：長條 ROI 掃描（重疊+padding）...");
     const z = await zxingScanLongBar(scanCrop, debug);
 
@@ -534,7 +629,6 @@
       };
     }
 
-    // 2) OCR fallback：文字帶
     setStatus("⚠️ ZXing 未解到，改用 OCR fallback（文字帶）...");
     const o = await ocrFallbackText(scanCrop, debug);
 
@@ -593,7 +687,14 @@
       document.getElementById('displayArea').style.display = 'block';
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
-      setStatus("請把條碼『橫放』對準長條框（避免反光、靠近一點）。");
+      document.getElementById('guidelines').style.display = 'block';
+      video.style.display = 'block';
+      preview.style.display = 'none';
+
+      setStatus("🔎 已啟動自動追蹤：把條碼『橫放』對準長條框，抓到就會自動跳出複核。你也可隨時按拍照。");
+
+      // ✅ 自動追蹤開始
+      startAutoTrack();
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
     }
@@ -615,10 +716,12 @@
       return;
     }
 
+    // ✅ 使用者手動拍照時：先停自動追蹤，避免同時在掃
+    stopAutoTrack();
+
     workCanvas.width = video.videoWidth;
     workCanvas.height = video.videoHeight;
 
-    // ✅ 拍照時也先鋪白底
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
     ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
@@ -632,6 +735,9 @@
   }
 
   function prepareUIForAnalysis() {
+    // ✅ 進入分析/複核：停掉追蹤
+    stopAutoTrack();
+
     video.style.display = 'none';
     preview.style.display = 'block';
     document.getElementById('displayArea').style.display = 'block';
