@@ -8,7 +8,11 @@
         body { font-family: sans-serif; padding: 15px; background: #fdfdfd; }
         .card { background: white; padding: 15px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
         .item-row { display: flex; align-items: center; padding: 12px 0; border-bottom: 1px solid #eee; }
-        button { width: 100%; padding: 15px; background: #f2994a; color: white; border: none; border-radius: 5px; font-size: 16px; margin-top: 15px; }
+        button { width: 100%; padding: 15px; background: #f2994a; color: white; border: none; border-radius: 5px; font-size: 16px; margin-top: 15px; cursor: pointer; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #statusMsg { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; font-size: 14px; }
+        .error-box { background: #fff0f0; border: 1px solid #ff4d4f; color: #ff4d4f; display: block !important; }
+        .loading { color: #f2994a; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -21,56 +25,98 @@
             <h3>📦 總倉待發清單 (效期優先)</h3>
             <div id="itemsContainer">載入中...</div>
         </div>
-        <button onclick="submitTransfer()">確認撥補送出</button>
+
+        <div id="statusMsg"></div>
+
+        <button id="submitBtn" onclick="submitTransfer()">確認撥補送出</button>
+        <button class="back-btn" onclick="location.href='index.html'" style="background:#666;">⬅️ 返回總表</button>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
-        // 初始化：抓地點與公司倉庫存
+        // 這裡要填入你的 Supabase 資訊 (或從 index 引入)
+        const supabase = window.supabase.createClient('你的URL', '你的KEY');
+
         async function init() {
-            // 1. 抓地點 (排除總倉)
-            const { data: locs } = await supabase.from('locations').select('name');
-            const select = document.getElementById('targetLoc');
-            locs.filter(l => l.name !== '公司總倉').forEach(l => {
-                select.add(new Option(l.name, l.name));
-            });
+            try {
+                // 1. 抓地點
+                const { data: locs, error: lErr } = await supabase.from('locations').select('name');
+                if(lErr) throw lErr;
 
-            // 2. 抓總倉在庫物料 (按效期排序)
-            const { data: items } = await supabase.from('inventory_summary')
-                .select('*').eq('location', '公司總倉').gt('current_stock', 0)
-                .order('expiry_date', { ascending: true });
+                const select = document.getElementById('targetLoc');
+                locs.filter(l => l.name !== '公司總倉').forEach(l => {
+                    select.add(new Option(l.name, l.name));
+                });
 
-            document.getElementById('itemsContainer').innerHTML = items.map(i => `
-                <div class="item-row">
-                    <input type="checkbox" name="item" value="${i.item_uuid}" style="zoom:1.3">
-                    <div style="margin-left:10px;">
-                        <b>${i.item_uuid.substring(0,12)}</b><br>
-                        <small>效期: ${i.expiry_date} | 剩: ${i.current_stock}</small>
+                // 2. 抓總倉在庫物料
+                const { data: items, error: iErr } = await supabase.from('inventory_summary')
+                    .select('*').eq('location', '公司總倉').gt('current_stock', 0)
+                    .order('expiry_date', { ascending: true });
+                if(iErr) throw iErr;
+
+                document.getElementById('itemsContainer').innerHTML = items.map(i => `
+                    <div class="item-row">
+                        <input type="checkbox" name="item" value="${i.item_uuid}" data-exp="${i.expiry_date}" data-pcode="${i.product_code}" style="zoom:1.3">
+                        <div style="margin-left:10px;">
+                            <b>${i.item_uuid.substring(0,12)}</b><br>
+                            <small>效期: ${i.expiry_date || '無'} | 剩: ${i.current_stock}</small>
+                        </div>
                     </div>
-                </div>
-            `).join('') || "總倉目前無貨";
+                `).join('') || "總倉目前無貨";
+            } catch (err) {
+                showError("初始化失敗: " + err.message);
+            }
         }
         
-        // 這裡就是你說的「送出」邏輯
         async function submitTransfer() {
             const target = document.getElementById('targetLoc').value;
             const checked = document.querySelectorAll('input[name="item"]:checked');
+            const btn = document.getElementById('submitBtn');
+            const status = document.getElementById('statusMsg');
+
             if(checked.length === 0) return alert("請勾選物料");
 
-            for(let el of checked) {
-                await fetch('/api/stock', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        item_uuid: el.value,
-                        from_loc: '公司總倉',
-                        to_loc: target,
-                        operator: '業務撥補'
-                    })
-                });
+            // UI 鎖定
+            btn.disabled = true;
+            status.innerHTML = "<span class='loading'>🚀 撥補處理中...</span>";
+            status.className = "";
+            status.style.display = "block";
+
+            try {
+                for(let el of checked) {
+                    const res = await fetch('/api/stock', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            item_uuid: el.value,
+                            from_loc: '公司總倉',
+                            to_loc: target,
+                            operator: '業務撥補',
+                            expiry_date: el.getAttribute('data-exp'), // 帶入效期
+                            product_code: el.getAttribute('data-pcode') // 帶入代碼
+                        })
+                    });
+
+                    const result = await res.json();
+                    if(!res.ok) {
+                        throw new Error(`[${el.value.substring(0,6)}] 失敗: ${result.message || JSON.stringify(result)}`);
+                    }
+                }
+                alert("✅ 撥補成功！");
+                location.href = 'index.html';
+            } catch (err) {
+                showError("撥補中斷！原因：" + err.message);
+                btn.disabled = false;
             }
-            alert("撥補成功！");
-            location.href = 'index.html';
         }
+
+        function showError(msg) {
+            const status = document.getElementById('statusMsg');
+            status.innerHTML = `<b>❌ 發生錯誤</b><br><small>${msg}</small>`;
+            status.className = "error-box";
+            status.style.display = "block";
+        }
+
         init();
     </script>
 </body>
