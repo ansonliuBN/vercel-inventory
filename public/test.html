@@ -42,19 +42,19 @@
         console.log(msg);
     };
 
+    // 首先確保你有引入 Tesseract.js (用 CDN 即可)
+// <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
     async function processAndUpload() {
         const file = document.getElementById('fileInput').files[0];
         if (!file) return;
 
         const status = document.getElementById('status');
-        status.innerText = "🔄 正在壓縮圖片...";
-        log(`原始檔案大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
-
-        // 1. 使用 Canvas 自動壓縮圖片
-        const compressedBase64 = await compressImage(file, 1000); // 縮減寬度到 1000px
-        log(`壓縮完成，準備傳送至 API...`);
-
-        status.innerText = "📡 正在傳送至 API 並進行 OCR...";
+        const ocrTextElem = document.getElementById('ocrText');
+        status.innerText = "🔄 正在處理影像...";
+        
+        // 1. 先壓縮並傳給 API 讓 Sharp 處理 (這步你已經通了)
+        const compressedBase64 = await compressImage(file, 1000);
         
         try {
             const res = await fetch('/api/test-ocr', {
@@ -62,21 +62,40 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: compressedBase64 })
             });
-
-            if (!res.ok) throw new Error(`API 錯誤: ${res.status}`);
-
             const data = await res.json();
-            log(`API 回傳成功！`);
-
-            document.getElementById('ocrText').innerText = data.rawText || "(空白)";
-            document.getElementById('imgBase').src = "data:image/jpeg;base64," + data.debugImages.base;
-            document.getElementById('imgThreshold').src = "data:image/jpeg;base64," + data.debugImages.threshold;
-            document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
             
+            // 顯示 Sharp 處理後的 Debug 圖
+            const baseImgUrl = "data:image/jpeg;base64," + data.debugImages.base;
+            const threshImgUrl = "data:image/jpeg;base64," + data.debugImages.threshold;
+            document.getElementById('imgBase').src = baseImgUrl;
+            document.getElementById('imgThreshold').src = threshImgUrl;
+            document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
+
+            // 2. 在前端啟動 Tesseract 辨識 (使用預載語言包)
+            status.innerText = "🧠 瀏覽器正在本地辨識 (使用預載語言包)...";
+            
+            const worker = await Tesseract.createWorker('eng', 1, {
+                // 重點：指向你自己的語言包路徑
+                langPath: window.location.origin + '/tessdata', 
+                logger: m => console.log(m)
+            });
+
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-',
+                tessedit_pageseg_mode: '7',
+            });
+
+            // 拿 Sharp 處理後最乾淨的那張圖 (Threshold) 來辨識
+            const { data: { text } } = await worker.recognize(threshImgUrl);
+            
+            ocrTextElem.innerText = text.replace(/\s+/g, '');
             status.innerText = "✅ 辨識完成";
+            
+            await worker.terminate();
+
         } catch (err) {
-            log(`❌ 出錯了: ${err.message}`);
-            status.innerText = "❌ 處理失敗";
+            console.error(err);
+            status.innerText = "❌ 失敗: " + err.message;
         }
     }
 
