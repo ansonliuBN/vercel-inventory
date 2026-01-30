@@ -3,19 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>智能拍照辨識系統 - 穩定版</title>
+<title>智能辨識系統 - 雙模式版</title>
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; color:#333; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
-  button { background:#7360f2; color:white; border:none; padding:15px; border-radius:10px; cursor:pointer; width:100%; font-size:18px; font-weight:bold; margin-top:10px; }
-  .snap-btn { background:#27ae60; } /* 拍照按鈕綠色 */
-  .secondary { background:#444; }
-  .back-btn { background:#666; margin-top: 15px; }
   
-  /* 容器與顯示 */
-  .camera-wrap { position: relative; width: 100%; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; border: 2px solid #7360f2; background:#000; margin-top: 15px; }
+  /* 按鈕樣式 */
+  .btn-group { display: flex; gap: 10px; margin-top: 15px; }
+  button { flex: 1; padding: 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; color: white; }
+  .btn-cam { background: #7360f2; }
+  .btn-file { background: #2d9cdb; }
+  .btn-snap { background: #27ae60; width: 100%; margin-top: 10px; }
+  .btn-retry { background: #666; margin-top: 10px; width: 100%; }
+  .back-btn { background: transparent; color: #666; font-size: 14px; margin-bottom: 10px; }
+
+  /* 顯示區域 */
+  .camera-wrap { position: relative; width: 100%; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; border: 2px solid #ddd; background:#000; margin-top: 15px; display: none; }
   video, #photoPreview { width:100%; height:100%; object-fit: cover; }
-  #photoPreview { display: none; } /* 拍完後顯示這張圖 */
+  #photoPreview { display: none; background: #eee; }
 
   /* 導引框 */
   .overlay { position:absolute; inset:0; pointer-events:none; }
@@ -26,8 +31,8 @@
   .c3 { left:-2px; bottom:-2px; border-right:none; border-top:none; border-bottom-left-radius:12px; }
   .c4 { right:-2px; bottom:-2px; border-left:none; border-top:none; border-bottom-right-radius:12px; }
 
-  #status { margin-top:12px; font-size:14px; min-height:80px; line-height:1.5; color: #555; }
-  .spinner { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
+  #status { margin-top:12px; font-size:14px; min-height:80px; line-height:1.5; text-align: left; }
+  .loader { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
   canvas#workCanvas { display:none; }
 </style>
@@ -35,14 +40,19 @@
 <body>
 
 <div class="card">
-  <button class="back-btn" onclick="location.href='index.html'" style="width: auto; padding: 8px 20px; float: left; margin-top: 0;">⬅️ 返回</button>
-  <div style="clear: both;"></div>
+  <button class="back-btn" onclick="location.href='index.html'">⬅️ 返回總表</button>
   
-  <h2>📸 拍照辨識入庫</h2>
+  <h2>智能辨識入庫</h2>
   
-  <div class="camera-wrap" id="cameraWrap">
+  <div class="btn-group" id="modeSelect">
+    <button class="btn-cam" onclick="startCamera()">📸 開啟相機</button>
+    <button class="btn-file" onclick="document.getElementById('fileInput').click()">📁 上傳檔案</button>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" style="display: none;" onchange="handleFileUpload(event)">
+
+  <div class="camera-wrap" id="displayArea">
     <video id="video" autoplay muted playsinline></video>
-    <img id="photoPreview" alt="Captured photo">
+    <img id="photoPreview" alt="Preview">
     <div class="overlay" id="guidelines">
       <div class="scan-box">
         <div class="corner c1"></div><div class="corner c2"></div>
@@ -51,17 +61,16 @@
     </div>
   </div>
 
-  <div class="spinner" id="loader"></div>
-  <div id="status">正在啟動相機...</div>
+  <div class="loader" id="loader"></div>
+  <div id="status">請選擇辨識模式</div>
 
-  <button id="btnSnap" class="snap-btn" onclick="takeSnapshot()" style="display:none;">📸 點擊拍照辨識</button>
-  <button id="btnRetry" class="secondary" onclick="resetUI()" style="display:none;">🔄 重拍一張</button>
+  <button id="btnSnap" class="btn-snap" onclick="takeSnapshot()" style="display:none;">立即拍照辨識</button>
+  <button id="btnRetry" class="btn-retry" onclick="resetAll()" style="display:none;">重新選擇</button>
 
   <canvas id="workCanvas"></canvas>
 </div>
 
 <script src="https://unpkg.com/@zxing/library@latest"></script>
-<script src="https://unpkg.com/@zxing/browser@latest"></script>
 <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
 
 <script>
@@ -70,25 +79,59 @@
   const statusEl = document.getElementById('status');
   const loader = document.getElementById('loader');
   const workCanvas = document.getElementById('workCanvas');
-  const ctx = workCanvas.getContext('2d', { willReadFrequently: true });
+  const ctx = workCanvas.getContext('2d');
 
   let stream = null;
 
-  // --- 啟動相機 ---
-  async function initCamera() {
+  // 1. 相機模式啟動
+  async function startCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } } });
       video.srcObject = stream;
+      video.style.display = 'block';
+      preview.style.display = 'none';
+      document.getElementById('displayArea').style.display = 'block';
+      document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
-      statusEl.innerText = "請將條碼放入框內後拍照";
+      document.getElementById('guidelines').style.display = 'block';
+      statusEl.innerText = "請對準條碼後拍照";
     } catch (e) {
-      statusEl.innerHTML = `<b style="color:red">相機啟動失敗</b><br>${e.message}`;
+      alert("相機啟動失敗: " + e.message);
     }
   }
 
-  // --- 拍照並觸發後台分析 ---
-  async function takeSnapshot() {
-    // 1. 定格畫面
+  // 2. 檔案模式處理
+  function handleFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            // 繪製到畫布以便分析
+            workCanvas.width = img.width;
+            workCanvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            
+            // 顯示預覽
+            preview.src = e.target.result;
+            video.style.display = 'none';
+            preview.style.display = 'block';
+            document.getElementById('displayArea').style.display = 'block';
+            document.getElementById('modeSelect').style.display = 'none';
+            document.getElementById('btnRetry').style.display = 'block';
+            document.getElementById('guidelines').style.display = 'none';
+            
+            triggerAnalysis(e.target.result);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // 3. 拍照動作
+  function takeSnapshot() {
     workCanvas.width = video.videoWidth;
     workCanvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
@@ -96,162 +139,122 @@
     const dataUrl = workCanvas.toDataURL('image/jpeg', 0.9);
     preview.src = dataUrl;
     
-    // 2. 切換 UI
     video.style.display = 'none';
     preview.style.display = 'block';
-    document.getElementById('guidelines').style.display = 'none';
     document.getElementById('btnSnap').style.display = 'none';
     document.getElementById('btnRetry').style.display = 'block';
+    document.getElementById('guidelines').style.display = 'none';
     
+    triggerAnalysis(dataUrl);
+  }
+
+  // 4. 核心辨識引擎
+  async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
     statusEl.innerHTML = "⌛ 正在進行深度分析 (ZXing + OCR)...";
 
-    // 3. 執行分析
-    analyzeImage(dataUrl);
-  }
-
-  async function analyzeImage(imgData) {
     try {
       const ZX = window.ZXingBrowser || window.ZXing;
       const reader = new ZX.BrowserMultiFormatReader();
-      let resultText = "";
+      let foundText = "";
 
-      // A. 嘗試條碼 (多角度暴力破解)
-      const rotations = [0, 90, 270];
-      for (let rot of rotations) {
-        if (rot !== 0) {
-            rotateCanvas(rot);
-        }
+      // A. 條碼辨識 (含多角度旋轉)
+      for (let rot of [0, 90, 270]) {
+        if (rot !== 0) rotateCanvas(rot);
         try {
           const res = await reader.decodeFromCanvas(workCanvas);
-          if (res) { resultText = res.getText(); break; }
+          if (res) { foundText = res.getText(); break; }
         } catch(e) {}
       }
 
-      // B. 如果條碼沒中，跑 OCR
-      if (!resultText) {
-        statusEl.innerHTML = "🧭 條碼較難讀取，切換至 OCR 文字辨識...";
+      // B. OCR 補償
+      if (!foundText) {
+        statusEl.innerHTML = "🧭 條碼未偵測，切換 OCR 文字辨識...";
         const ocrRes = await Tesseract.recognize(imgData, 'eng');
-        resultText = ocrRes.data.text.replace(/\s+/g, '');
+        foundText = ocrRes.data.text.replace(/\s+/g, '');
       }
 
-      if (resultText) {
-        handleFinalData(resultText);
+      if (foundText) {
+        processAndSave(foundText);
       } else {
-        statusEl.innerHTML = "❌ 無法辨識內容，請確保光線充足並重拍。";
+        statusEl.innerHTML = "❌ 無法辨識內容，請上傳更清晰的照片。";
         loader.style.display = 'none';
       }
     } catch (err) {
-      statusEl.innerText = "出錯了: " + err.message;
+      statusEl.innerText = "錯誤: " + err.message;
       loader.style.display = 'none';
     }
   }
 
-  function handleFinalData(rawText) {
+  async function processAndSave(text) {
     loader.style.display = 'none';
-    const gs1 = parseGS1(rawText);
+    const gs1 = parseGS1(text);
     
-    const info = `
-      <div style="text-align:left; background:#eef2ff; padding:10px; border-radius:10px; margin-top:10px;">
+    statusEl.innerHTML = `
+      <div style="background:#eef; padding:10px; border-radius:10px;">
         <b>辨識 UUID:</b> <span style="color:blue">${gs1.key}</span><br>
         <b>效期:</b> ${gs1.exp || '無'}<br>
-        <small>原始碼: ${rawText.substring(0, 30)}...</small>
+        <small>原始字串: ${text.substring(0, 30)}</small>
       </div>
     `;
-    statusEl.innerHTML = info;
 
     if (confirm(`確認入庫 [${gs1.key}] 嗎？`)) {
-      saveToDB(gs1);
-    }
-  }
+      loader.style.display = 'block';
+      try {
+        const res = await fetch('/api/stock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            item_uuid: gs1.key,
+            expiry_date: gs1.exp,
+            from_loc: 'FACTORY',
+            to_loc: 'MAIN',
+            operator: 'HYBRID_MODE'
+          })
+        });
 
-  async function saveToDB(gs1) {
-    loader.style.display = 'block';
-    statusEl.innerHTML = "🚀 正在存入資料庫...";
-    
-    try {
-      const res = await fetch('/api/stock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          item_uuid: gs1.key,
-          product_code: gs1.gtin,
-          expiry_date: gs1.exp,
-          from_loc: 'FACTORY',
-          to_loc: 'MAIN',
-          operator: 'SNAP_MODE'
-        })
-      });
+        // 處理 Vercel 報錯文字問題
+        const result = await res.json().catch(() => ({ message: "Server 回傳格式錯誤 (非 JSON)" }));
 
-      const result = await res.json();
-
-      if (res.ok) {
-        alert("✅ 入庫成功！");
-        location.href = 'index.html';
-      } else {
-        // --- 報錯診斷邏輯 ---
-        console.error("Database Error:", result);
-        
-        // 抓出具體的錯誤原因 (Supabase 通常放在 message)
-        let errorMsg = result.message || result.error_description || JSON.stringify(result);
-        
-        statusEl.innerHTML = `
-          <div style="color:red; background:#fff5f5; padding:15px; border:2px solid #ff0000; border-radius:12px; text-align:left; margin-top:10px;">
-            <b style="font-size:18px;">❌ 存入失敗</b><br>
-            <p>原因：<span style="background:#eee; padding:2px 5px;">${errorMsg}</span></p>
-            <hr>
-            <small>提示：如果是 "column does not exist"，代表 Supabase 資料表欄位名稱打錯了。請檢查是否有 <b>operator_name</b> 這個欄位。</small>
-          </div>
-        `;
+        if (res.ok) {
+          alert("✅ 入庫成功！");
+          location.href = 'index.html';
+        } else {
+          alert("❌ 存入失敗: " + (result.message || "未知原因"));
+          loader.style.display = 'none';
+        }
+      } catch (e) {
+        alert("網路連線錯誤，請檢查 Vercel Logs");
         loader.style.display = 'none';
       }
-    } catch (e) {
-      statusEl.innerHTML = `<b style="color:red">❌ 網路連線出錯</b><br>${e.message}`;
-      loader.style.display = 'none';
     }
   }
 
   function rotateCanvas(deg) {
-    const tempW = workCanvas.width;
-    const tempH = workCanvas.height;
+    const tempW = workCanvas.width, tempH = workCanvas.height;
     const tempCanvas = document.createElement('canvas');
     const tCtx = tempCanvas.getContext('2d');
     tempCanvas.width = tempH; tempCanvas.height = tempW;
     tCtx.translate(tempH/2, tempW/2);
     tCtx.rotate(deg * Math.PI / 180);
-    tCtx.drawImage(preview, -tempW/2, -tempH/2);
+    tCtx.drawImage(preview, -tempW/2, -tempH/2, tempW, tempH);
     workCanvas.width = tempCanvas.width;
     workCanvas.height = tempCanvas.height;
     ctx.drawImage(tempCanvas, 0, 0);
   }
 
-  function resetUI() {
-    video.style.display = 'block';
-    preview.style.display = 'none';
-    document.getElementById('guidelines').style.display = 'block';
-    document.getElementById('btnSnap').style.display = 'block';
-    document.getElementById('btnRetry').style.display = 'none';
-    statusEl.innerText = "請對準條碼後拍照";
-    loader.style.display = 'none';
+  function parseGS1(s) {
+    let gs1 = { key: s.substring(0, 12), exp: null };
+    const expM = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/);
+    if (expM) gs1.exp = expM[1];
+    // 統一格式：製造_效期_序號 (這裡簡化為序號，你可以按需調整 key 邏輯)
+    return gs1;
   }
 
-  function parseGS1(raw) {
-    let s = String(raw || '').replace(/\s+/g, '').replace(/[\[\{]/g, '(').replace(/[\]\}]/g, ')');
-    const out = { gtin:'', mfg:'', exp:'', sn:'' };
-    const matches = s.matchAll(/\((\d{2})\)([^()]+)/g);
-    for (const m of matches) {
-      const ai = m[1], val = m[2];
-      if (ai === '01') out.gtin = val;
-      if (ai === '11') out.mfg = val;
-      if (ai === '17') out.exp = val;
-      if (ai === '21') out.sn = val;
-    }
-    const sn8 = (out.sn || s).replace(/[^A-Za-z0-9]/g, '').substring(0, 8).toUpperCase();
-    out.key = (out.mfg && out.exp) ? `${out.mfg}_${out.exp}_${sn8}` : (sn8 || "UNKNOWN");
-    return out;
+  function resetAll() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    location.reload();
   }
-
-  initCamera();
 </script>
 </body>
 </html>
