@@ -2,51 +2,42 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>OCR Test (Tesseract v5)</title>
+<title>OCR Test (NO MODULE)</title>
 </head>
 <body>
 
 <h3>OCR Test</h3>
 <input type="file" id="file" accept="image/*">
-<pre id="out"></pre>
+<pre id="out">頁面已載入\n</pre>
 
-<script type="module">
-import { createWorker } from "/tesseract/tesseract.esm.min.js";
+<!-- 不用 module，不用 import -->
+<script src="/tesseract/tesseract.min.js"></script>
 
+<script>
 const out = document.getElementById("out");
 const fileInput = document.getElementById("file");
 
-let worker = null;
+out.textContent += "Tesseract global = " + (typeof Tesseract) + "\n";
 
-async function getWorker() {
-  if (worker) return worker;
+let worker;
 
-  out.textContent += "建立 worker...\n";
+async function initWorker() {
+  out.textContent += "初始化 worker...\n";
 
-  worker = await createWorker({
+  worker = Tesseract.createWorker({
     workerPath: "/tesseract/worker.min.js",
     corePath: "/tesseract/tesseract-core.wasm",
-    langPath: "/tessdata",
-    logger: m => {
-      // 可開啟觀察進度
-      // console.log(m);
-    }
+    langPath: "/tessdata"
   });
 
-  out.textContent += "載入語言...\n";
+  await worker.load();
+  out.textContent += "worker loaded\n";
+
   await worker.loadLanguage("eng");
+  out.textContent += "language loaded\n";
 
-  out.textContent += "初始化引擎...\n";
   await worker.initialize("eng");
-
-  out.textContent += "設定 OCR 參數...\n";
-  await worker.setParameters({
-    tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-    tessedit_pageseg_mode: "7" // SINGLE_LINE
-  });
-
-  out.textContent += "OCR worker ready ✅\n\n";
-  return worker;
+  out.textContent += "worker initialized\n";
 }
 
 fileInput.addEventListener("change", async () => {
@@ -54,16 +45,16 @@ fileInput.addEventListener("change", async () => {
   if (!file) return;
 
   try {
-    const w = await getWorker();
+    if (!worker) await initWorker();
 
     out.textContent += "開始 OCR...\n";
-    const res = await w.recognize(file);
+    const res = await worker.recognize(file);
 
     out.textContent += "\n--- OCR RESULT ---\n";
     out.textContent += res.data.text || "(no text)\n";
 
-  } catch (err) {
-    out.textContent += "\n❌ ERROR:\n" + err.message;
+  } catch (e) {
+    out.textContent += "\n❌ ERROR:\n" + e.message;
   }
 });
 </script>
