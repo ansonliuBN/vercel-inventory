@@ -449,28 +449,31 @@
       }, 800);
     }
 
-    function stopScan(){
-      scanning = false;
-      stopAllTimers();
-      try { reader.reset(); } catch(_){}
-      setBusy(false);
-      btnStart.disabled = false;
-      btnStop.disabled = true;
-      setStatus('⛔ 已停止。按「開啟相機開始掃描」再啟動。');
+function stopScan(){
+  scanning = false;
+  stopAllTimers();
+  setBusy(false);
 
-      // 可選：停止後隱藏畫面
-      cameraWrap.style.display = 'none';
+  // 停 ZXing
+  try{
+    if (decodeControl && decodeControl.stop) decodeControl.stop();
+  }catch(_){}
+  decodeControl = null;
 
-      // 停止相機串流（釋放鏡頭）
-      const stream = video.srcObject;
-      if (stream && stream.getTracks) {
-        stream.getTracks().forEach(t => t.stop());
-      }
-      video.srcObject = null;
-    }
+  // 停相機
+  try{
+    const s = video.srcObject || stream;
+    if (s && s.getTracks) s.getTracks().forEach(t => t.stop());
+  }catch(_){}
+  stream = null;
+  video.srcObject = null;
 
-    btnStart.onclick = startScan;
-    btnStop.onclick = stopScan;
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+  cameraWrap.style.display = 'none';
+}
+
+
   </script>
 
 </body>
