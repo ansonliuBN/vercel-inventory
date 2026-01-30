@@ -1,5 +1,5 @@
 // public/libs/scanEngine.js
-import { extractGS1, hasGS1Core, compact, normalizeTextKeepParens } from "./gs1.js";
+import { extractGS1, hasGS1Complete, hasGS1Hope, compact, normalizeTextKeepParens } from "./gs1.js";
 
 let _zxingReady = false;
 let _ocrWorker = null;
@@ -105,10 +105,15 @@ export async function zxingDecodeFromCanvas(canvasForZXing) {
   const imgData = g.getImageData(0, 0, canvasForZXing.width, canvasForZXing.height);
   const results = await window.ZXingWASM.readBarcodes(imgData, { tryHarder: true, maxNumberOfSymbols: 2 });
   if (!results || !results.length) return "";
-  // 找到最像 GS1 的就回
+
+  // 先找完整，再找有希望
   for (const r of results) {
     const t = r?.text || "";
-    if (t && hasGS1Core(t)) return t;
+    if (t && hasGS1Complete(t)) return t;
+  }
+  for (const r of results) {
+    const t = r?.text || "";
+    if (t && hasGS1Hope(t)) return t;
   }
   return results[0]?.text || "";
 }
@@ -117,7 +122,6 @@ export async function zxingScanBigRoi(workCanvas, debug = []) {
   const rect = getBigRoiRect(workCanvas, 0.52);
   const bigCrop = cropCanvas(workCanvas, rect, 2.0);
 
-  // 做幾段重疊窗口（條碼可能偏上/偏下）
   const W = bigCrop.width, H = bigCrop.height;
   const roiW = Math.floor(W * 0.96);
   const roiH = Math.floor(H * 0.78);
@@ -130,6 +134,7 @@ export async function zxingScanBigRoi(workCanvas, debug = []) {
   }
 
   const angles = [0, 90, 270, 180];
+
   for (const item of candidates) {
     for (const deg of angles) {
       const feed = deg === 0 ? item.canvas : rotateCanvas(item.canvas, deg);
@@ -137,23 +142,29 @@ export async function zxingScanBigRoi(workCanvas, debug = []) {
       try { t = await zxingDecodeFromCanvas(feed); } catch (e) { t = ""; }
 
       debug.push(`[ZXING][${item.name}][${deg}] ${t ? compact(t).slice(0, 120) : "(empty)"}`);
-      if (t && hasGS1Core(t)) {
-        debug.push(`[ZXING][BEST] ${item.name} @ ${deg}`);
-        return { text: t, source: `ZXING_${item.name}_${deg}`, bigCrop, feed };
+
+      if (t && hasGS1Complete(t)) {
+        debug.push(`[ZXING][BEST] COMPLETE ${item.name} @ ${deg}`);
+        return { text: t, source: `ZXING_${item.name}_${deg}`, bigCrop, feed, level: "complete" };
+      }
+      if (t && hasGS1Hope(t)) {
+        debug.push(`[ZXING][BEST] HOPE ${item.name} @ ${deg}`);
+        return { text: t, source: `ZXING_${item.name}_${deg}`, bigCrop, feed, level: "hope" };
       }
     }
   }
 
   debug.push(`[ZXING][BEST] -`);
-  return { text: "", source: "ZXING_NONE", bigCrop, feed: null };
+  return { text: "", source: "ZXING_NONE", bigCrop, feed: null, level: "none" };
 }
 
-// ===== OCR (full image rotate) =====
+// ===== OCR =====
 function canvasToJpegURL(canvas, q = 0.95) {
   return canvas.toDataURL("image/jpeg", q);
 }
 
-function enhanceForOcr(baseCanvas, contrast = 1.7, threshold = 170) {
+function enhanceForOcr(baseCanvas, contrast = 1.35, threshold = 175) {
+  // 注意：拍螢幕不要太兇，避免把摩爾紋變成硬噪點
   const c = document.createElement("canvas");
   c.width = baseCanvas.width;
   c.height = baseCanvas.height;
@@ -177,11 +188,12 @@ function enhanceForOcr(baseCanvas, contrast = 1.7, threshold = 170) {
   return c;
 }
 
-function downscaleIfNeeded(src, maxSide = 2200) {
+function downscaleToMaxSide(src, maxSide) {
   const w = src.width, h = src.height;
   const max = Math.max(w, h);
   if (max <= maxSide) return src;
   const scale = maxSide / max;
+
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.floor(w * scale));
   c.height = Math.max(1, Math.floor(h * scale));
@@ -201,48 +213,63 @@ export async function ocrFullRotate(workCanvas, debug = [], onFeedCanvas = null,
     tessedit_pageseg_mode: "6"
   };
 
-  const base = downscaleIfNeeded(workCanvas, 2200);
-  const enh = enhanceForOcr(base, 1.7, 170);
+  // 對付拍螢幕：多個 downscale 變體（20cm 常見有效）
+  const maxSides = [2200, 1600, 1200, 900];
   const angles = [0, 90, 180, 270];
 
-  for (const deg of angles) {
-    // RAW
-    const feedRaw = deg === 0 ? base : rotateCanvas(base, deg);
-    if (onFeedCanvas) onFeedCanvas(feedRaw);
+  for (const ms of maxSides) {
+    const base = downscaleToMaxSide(workCanvas, ms);
+    const enh = enhanceForOcr(base, 1.35, 175);
 
-    let rawText = "";
-    try {
-      const ret = await worker.recognize(canvasToJpegURL(feedRaw, 0.95), opts);
-      rawText = normalizeTextKeepParens(ret?.data?.text || "");
-    } catch (e) { rawText = ""; }
+    debug.push(`[OCR][SCALE] maxSide=${ms}, base=${base.width}x${base.height}`);
 
-    debug.push(`[OCR][RAW][${deg}] ${compact(rawText).slice(0, 220)}${compact(rawText).length > 220 ? "..." : ""}`);
+    for (const deg of angles) {
+      // RAW
+      const feedRaw = deg === 0 ? base : rotateCanvas(base, deg);
+      if (onFeedCanvas) onFeedCanvas(feedRaw);
 
-    if (rawText && hasGS1Core(rawText)) {
-      debug.push(`[OCR][BEST] RAW @ ${deg}`);
-      return { text: rawText, source: `OCR_FULL_RAW_${deg}`, feed: feedRaw, enh: null };
-    }
+      let rawText = "";
+      try {
+        const ret = await worker.recognize(canvasToJpegURL(feedRaw, 0.95), opts);
+        rawText = normalizeTextKeepParens(ret?.data?.text || "");
+      } catch (e) { rawText = ""; }
 
-    // ENH
-    const feedEnh = deg === 0 ? enh : rotateCanvas(enh, deg);
-    if (onEnhCanvas) onEnhCanvas(feedEnh);
+      debug.push(`[OCR][RAW][${deg}] ${compact(rawText).slice(0, 220)}${compact(rawText).length > 220 ? "..." : ""}`);
 
-    let enhText = "";
-    try {
-      const ret = await worker.recognize(canvasToJpegURL(feedEnh, 0.95), opts);
-      enhText = normalizeTextKeepParens(ret?.data?.text || "");
-    } catch (e) { enhText = ""; }
+      if (rawText && hasGS1Complete(rawText)) {
+        debug.push(`[OCR][BEST] COMPLETE RAW @ ${deg} scale=${ms}`);
+        return { text: rawText, source: `OCR_FULL_RAW_${deg}_S${ms}`, feed: feedRaw, enh: null, level: "complete" };
+      }
+      if (rawText && hasGS1Hope(rawText)) {
+        debug.push(`[OCR][BEST] HOPE RAW @ ${deg} scale=${ms}`);
+        return { text: rawText, source: `OCR_FULL_RAW_${deg}_S${ms}`, feed: feedRaw, enh: null, level: "hope" };
+      }
 
-    debug.push(`[OCR][ENH][${deg}] ${compact(enhText).slice(0, 220)}${compact(enhText).length > 220 ? "..." : ""}`);
+      // ENH
+      const feedEnh = deg === 0 ? enh : rotateCanvas(enh, deg);
+      if (onEnhCanvas) onEnhCanvas(feedEnh);
 
-    if (enhText && hasGS1Core(enhText)) {
-      debug.push(`[OCR][BEST] ENH @ ${deg}`);
-      return { text: enhText, source: `OCR_FULL_ENH_${deg}`, feed: null, enh: feedEnh };
+      let enhText = "";
+      try {
+        const ret = await worker.recognize(canvasToJpegURL(feedEnh, 0.95), opts);
+        enhText = normalizeTextKeepParens(ret?.data?.text || "");
+      } catch (e) { enhText = ""; }
+
+      debug.push(`[OCR][ENH][${deg}] ${compact(enhText).slice(0, 220)}${compact(enhText).length > 220 ? "..." : ""}`);
+
+      if (enhText && hasGS1Complete(enhText)) {
+        debug.push(`[OCR][BEST] COMPLETE ENH @ ${deg} scale=${ms}`);
+        return { text: enhText, source: `OCR_FULL_ENH_${deg}_S${ms}`, feed: null, enh: feedEnh, level: "complete" };
+      }
+      if (enhText && hasGS1Hope(enhText)) {
+        debug.push(`[OCR][BEST] HOPE ENH @ ${deg} scale=${ms}`);
+        return { text: enhText, source: `OCR_FULL_ENH_${deg}_S${ms}`, feed: null, enh: feedEnh, level: "hope" };
+      }
     }
   }
 
   debug.push(`[OCR][BEST] -`);
-  return { text: "", source: "OCR_NONE", feed: null, enh: null };
+  return { text: "", source: "OCR_NONE", feed: null, enh: null, level: "none" };
 }
 
 // ===== Orchestration =====
@@ -261,18 +288,19 @@ export async function analyzeWorkCanvas(workCanvas, {
     if (onBigCrop) onBigCrop(z.bigCrop);
     if (onZxingFeed && z.feed) onZxingFeed(z.feed);
 
-    if (z.text && hasGS1Core(z.text)) {
+    if (z.text && (z.level === "complete" || z.level === "hope")) {
       const data = extractGS1(z.text);
-      return { source: z.source, raw: z.text, data, debug_text: debug.join("\n") };
+      return { source: z.source, raw: z.text, data, debug_text: debug.join("\n"), level: z.level };
     }
 
     if (!ocrAfterZxingFails) {
-      return { source: z.source, raw: z.text || "", data: extractGS1(z.text || ""), debug_text: debug.join("\n") };
+      const data = extractGS1(z.text || "");
+      return { source: z.source, raw: z.text || "", data, debug_text: debug.join("\n"), level: z.level };
     }
   }
 
-  // 2) OCR fallback (full image rotate)
+  // 2) OCR fallback
   const o = await ocrFullRotate(workCanvas, debug, onOcrFeed, onOcrEnh);
   const data = extractGS1(o.text || "");
-  return { source: o.source, raw: o.text || "", data, debug_text: debug.join("\n") };
+  return { source: o.source, raw: o.text || "", data, debug_text: debug.join("\n"), level: o.level };
 }

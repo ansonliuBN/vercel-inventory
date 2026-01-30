@@ -262,12 +262,15 @@
     });
   }
 
+  function hasAny(data) {
+    return !!((data?.gtin) || (data?.expDisplay) || (data?.lot));
+  }
+
   async function runAnalyze({ forceOcr = false } = {}) {
     loader.style.display = "block";
     const debug = [];
     debug.push(`WASM_URL: /zxing_reader.wasm`);
 
-    // debug thumb
     document.getElementById('imgWorkThumb').src = canvasToPreviewURL(makeThumb(workCanvas, 420, 420));
 
     const result = await analyzeWorkCanvas(workCanvas, {
@@ -305,10 +308,10 @@
     loader.style.display = "none";
     document.getElementById('reviewArea').style.display = "block";
 
-    const ok = (data.gtin && data.expDisplay);
-    setStatus(ok
-      ? `辨識完成（來源：${result.source}），請複核資料。`
-      : `⚠️ 未抓到完整 GTIN/EXP，建議重拍或人工修正。（來源：${result.source}）`
+    setStatus(
+      hasAny(data)
+        ? `✅ 已抓到部分資訊（來源：${result.source}），請複核/補齊後匯入。`
+        : `⚠️ 仍未抓到關鍵資訊，建議靠近、避反光、或改用上傳圖片。（來源：${result.source}）`
     );
   }
 
@@ -325,19 +328,17 @@
 
       autoBusy = true;
       try {
-        // grab frame into workCanvas
         workCanvas.width = video.videoWidth;
         workCanvas.height = video.videoHeight;
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
         ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
 
-        // 只跑 ZXing：forceOcr=false，但我們只用結果是否有 core 來判斷
+        // 只跑 ZXing，不跑 OCR（追蹤階段省電）
         const debug = [];
         const r = await analyzeWorkCanvas(workCanvas, { forceOcr:false, ocrAfterZxingFails:false, debug });
 
-        // 有 core → 直接彈複核
-        if (r?.data?.gtin && r?.data?.expDisplay) {
+        if (hasAny(r?.data)) {
           autoFound = true;
           stopAutoTrack();
 
@@ -352,9 +353,9 @@
 
         zxingFailCount++;
         if (zxingFailCount < ZXING_FAIL_THRESHOLD_FOR_OCR) {
-          setStatus(`🔎 自動追蹤中…（ZXing 失敗 ${zxingFailCount}/${ZXING_FAIL_THRESHOLD_FOR_OCR}）靠近、避免反光。`);
+          setStatus(`🔎 自動追蹤中…（ZXing 失敗 ${zxingFailCount}/${ZXING_FAIL_THRESHOLD_FOR_OCR}）距離約 20cm 會很吃摩爾紋，試著再近/調亮度。`);
         } else {
-          // 連續 3 次失敗 → 全圖 OCR 保底 + 彈複核
+          // 連續 3 次 ZXing 失敗 → OCR 多尺度旋轉保底
           autoFound = true;
           stopAutoTrack();
 
@@ -386,7 +387,7 @@
       video.style.display = 'block';
       preview.style.display = 'none';
 
-      setStatus("🔎 自動追蹤中：先 ZXing，連續失敗 3 次→OCR 保底彈複核。也可按拍照。");
+      setStatus("🔎 自動追蹤中：只跑 ZXing（快）。連續失敗 3 次→OCR 多尺度旋轉保底彈複核。也可按拍照。");
       startAutoTrack();
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
@@ -433,8 +434,9 @@
     const expZh = (document.getElementById('editExp').value || "").trim();
     const lot = (document.getElementById('editLot').value || "").trim();
 
-    if (!gtin) { alert("❗ GTIN 不能空白"); return; }
-    if (!expZh) { alert("❗ 有效日期不能空白"); return; }
+    // 你要「先丟出來讓使用者補」：所以不強制全部有值
+    // 但至少 GTIN 建議要有（因為你說 item_uuid 放 GTIN）
+    if (!gtin) { alert("❗ 建議至少補上 GTIN（(01)後14碼）再匯入"); return; }
 
     const payload = {
       item_uuid: gtin,
@@ -463,11 +465,11 @@
     }
   }
 
-  // bind
   btnCam.addEventListener("click", startCamera);
   btnSnap.addEventListener("click", takeSnapshot);
   fileInput.addEventListener("change", handleFileUpload);
   btnSubmit.addEventListener("click", finalSubmit);
 </script>
+
 </body>
 </html>
