@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>智能辨識系統 - 診斷修正版</title>
+<title>智能辨識系統 - 終極穩定版</title>
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; color:#333; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
@@ -19,6 +19,8 @@
   .c2 { right:-2px; top:-2px; border-left:none; border-bottom:none; border-top-right-radius:12px; }
   .c3 { left:-2px; bottom:-2px; border-right:none; border-top:none; border-bottom-left-radius:12px; }
   .c4 { right:-2px; bottom:-2px; border-left:none; border-top:none; border-bottom-right-radius:12px; }
+  .scan-line { position:absolute; left:5%; top:10%; width:90%; height:2px; background:linear-gradient(90deg,transparent,#00ffb3,transparent); animation: move 2s infinite; }
+  @keyframes move { 0%, 100% { top: 10%; } 50% { top: 90%; } }
   #status { margin-top:12px; font-size:14px; min-height:80px; line-height:1.5; color: #555; }
   canvas#workCanvas { display:none; }
 </style>
@@ -30,15 +32,21 @@
   <div style="clear: both;"></div>
   
   <h2>📸 智能辨識系統</h2>
-  <button id="btnStart" onclick="window.__startScan()">📸 開啟相機</button>
+  <button id="btnStart" onclick="window.__startScan()">📸 開啟相機開始掃描</button>
   <button id="btnStop" class="secondary" onclick="window.__stopScan()" disabled>⛔ 停止</button>
 
   <div class="camera-wrap" id="cameraWrap">
     <video id="video" autoplay muted playsinline></video>
-    <div class="overlay"><div class="scan-box"><div class="corner c1"></div><div class="corner c2"></div><div class="corner c3"></div><div class="corner c4"></div></div></div>
+    <div class="overlay">
+      <div class="scan-box">
+        <div class="corner c1"></div><div class="corner c2"></div>
+        <div class="corner c3"></div><div class="corner c4"></div>
+        <div class="scan-line"></div>
+      </div>
+    </div>
   </div>
 
-  <div id="status">✅ 系統就緒，請按開啟相機</div>
+  <div id="status">✅ 系統就緒</div>
   <canvas id="workCanvas"></canvas>
 </div>
 
@@ -57,7 +65,7 @@
 
   function setStatus(h){ statusEl.innerHTML = h; }
 
-  // --- GS1 解析 ---
+  // --- GS1 解析 + 統一 Key ---
   function parseGS1(raw) {
     let s = String(raw || '').replace(/\s+/g, '').replace(/[\[\{]/g, '(').replace(/[\]\}]/g, ')');
     const out = { gtin:'', mfg:'', exp:'', sn:'' };
@@ -72,6 +80,27 @@
     const sn8 = (out.sn || s).replace(/[^A-Za-z0-9]/g, '').substring(0, 8).toUpperCase();
     out.key = (out.mfg && out.exp) ? `${out.mfg}_${out.exp}_${sn8}` : (sn8 || "UNKNOWN");
     return out;
+  }
+
+  // --- ROI 截圖用於旋轉與 OCR ---
+  function captureROI(rot = 0) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return false;
+    const sw = vw * 0.85, sh = vh * 0.4;
+    const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+    const outW = (rot === 90 || rot === 270) ? sh : sw;
+    const outH = (rot === 90 || rot === 270) ? sw : sh;
+    workCanvas.width = outW; workCanvas.height = outH;
+    workCtx.save();
+    if (rot !== 0) {
+      workCtx.translate(outW/2, outH/2);
+      workCtx.rotate(rot * Math.PI / 180);
+      workCtx.drawImage(video, sx, sy, sw, sh, -sw/2, -sh/2, sw, sh);
+    } else {
+      workCtx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+    }
+    workCtx.restore();
+    return true;
   }
 
   async function finish(text, method) {
@@ -93,13 +122,15 @@
   }
 
   window.__startScan = async function() {
-    setStatus('⌛ 正在請求相機權限...');
+    setStatus('⌛ 正在啟動...');
     try {
-      // 1. 先確認套件有沒有讀到
+      // 修正後的套件偵測邏輯，解決 TRY_HARDER 報錯
       const ZX = window.ZXingBrowser || window.ZXing;
-      if (!ZX) throw new Error("ZXing 套件載入失敗，請檢查網路連線");
+      if (!ZX) throw new Error("套件載入失敗");
 
-      // 2. 啟動鏡頭 (拿掉 ideal 寬度限制，增加相容性)
+      const DecodeHintType = ZX.DecodeHintType || (window.ZXing && window.ZXing.DecodeHintType);
+      const BarcodeFormat = ZX.BarcodeFormat || (window.ZXing && window.ZXing.BarcodeFormat);
+
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       video.srcObject = stream;
       cameraWrap.style.display = 'block';
@@ -109,45 +140,61 @@
       scanning = true;
       let lastSeenAt = Date.now();
 
-      // 3. 初始化掃描器
       const hints = new Map();
-      hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+      if (DecodeHintType) {
+          hints.set(DecodeHintType.TRY_HARDER, true);
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+              BarcodeFormat.CODE_128, BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX
+          ]);
+      }
       
       reader = new ZX.BrowserMultiFormatReader(hints);
-      setStatus('🔍 掃描器啟動中，請對準條碼...');
-
       controls = await reader.decodeFromVideoDevice(null, video, (res) => {
         if (res && scanning) finish(res.getText(), 'ZXING');
       });
 
-      // 4. 背景輔助邏輯
+      // --- 智慧監控：自動旋轉與 OCR ---
       watchdogTimer = setInterval(async () => {
         if (!scanning) return;
         const idle = Date.now() - lastSeenAt;
-        if (idle > 5000) { // 延長到 5 秒才跑旋轉
+        
+        if (idle > 4000) { // 4秒掃不到，啟動背景旋轉
           setStatus('🧭 嘗試旋轉解碼中...');
-          // 旋轉邏輯略...
+          for (let r of [90, 270]) {
+            if (captureROI(r)) {
+              try {
+                const rs = await reader.decodeFromCanvas(workCanvas);
+                if (rs && scanning) finish(rs.getText(), 'ROTATE');
+              } catch(e){}
+            }
+          }
         }
-      }, 3000);
+
+        if (idle > 10000) { // 10秒掃不到，啟動 OCR
+          if (captureROI(0)) {
+            setStatus('🧠 啟動文字辨識中...');
+            const res = await Tesseract.recognize(workCanvas.toDataURL(), 'eng');
+            const txt = res.data.text.replace(/\s+/g, '');
+            if (txt.length > 5) finish(txt, 'OCR');
+          }
+          lastSeenAt = Date.now();
+        }
+      }, 2000);
 
     } catch (e) {
-      // ⚠️ 這裡會告訴你為什麼顯示「已停止」
-      console.error(e);
-      alert("❌ 啟動失敗：\n" + e.message + "\n\n請確認：\n1. 是否為 HTTPS 環境\n2. 是否允許相機權限");
+      alert("啟動失敗：" + e.message);
       window.__stopScan();
     }
   };
 
   window.__stopScan = function() {
-    scanning = false; 
-    clearInterval(watchdogTimer);
+    scanning = false; clearInterval(watchdogTimer);
     if (controls) controls.stop();
     if (stream) stream.getTracks().forEach(t => t.stop());
-    video.srcObject = null;
-    cameraWrap.style.display = 'none';
+    video.srcObject = null; cameraWrap.style.display = 'none';
     document.getElementById('btnStart').disabled = false;
     document.getElementById('btnStop').disabled = true;
-    setStatus('⛔ 已停止。');
+    setStatus('⛔ 已停止');
   };
 </script>
 </body>
