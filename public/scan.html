@@ -99,7 +99,8 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<script src="https://unpkg.com/@zxing/library@0.19.1"></script>
+//<script src="https://unpkg.com/@zxing/library@0.19.1"></script>
+<script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
 <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
 
 <script>
@@ -109,6 +110,68 @@
   const workCanvas = document.getElementById('workCanvas');
   const ctx = workCanvas.getContext('2d');
   let stream = null;
+
+  function getScanBoxRect() {
+    // 你的 scan-box：width 85%, height 40%, 置中
+    const cw = workCanvas.width;
+    const ch = workCanvas.height;
+
+    const boxW = cw * 0.85;
+    const boxH = ch * 0.40;
+
+    const x = Math.max(0, Math.floor((cw - boxW) / 2));
+    const y = Math.max(0, Math.floor((ch - boxH) / 2));
+
+    return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
+  }
+
+  function cropCanvasToDataURL(rect, scale = 1.0) {
+    const crop = document.createElement("canvas");
+    crop.width = Math.floor(rect.w * scale);
+    crop.height = Math.floor(rect.h * scale);
+    const cctx = crop.getContext("2d");
+
+    // 裁切 + 可選擇放大（scale > 1 可提升 1D 條碼成功率）
+    cctx.drawImage(
+      workCanvas,
+      rect.x, rect.y, rect.w, rect.h,
+      0, 0, crop.width, crop.height
+    );
+
+    return crop.toDataURL("image/jpeg", 0.95);
+  }
+
+  function quaggaDecodeFromDataURL(dataUrl) {
+    return new Promise((resolve) => {
+      Quagga.decodeSingle(
+        {
+          src: dataUrl,
+          numOfWorkers: 0, // decodeSingle 建議 0
+          inputStream: {
+            size: 1600  // 解析度，太小會讀不到，太大會慢
+          },
+          locator: {
+            patchSize: "medium",
+            halfSample: false
+          },
+          decoder: {
+            // GS1-128 本質是 Code128
+            readers: ["code_128_reader"]
+          },
+          locate: true
+        },
+        (result) => {
+          if (result && result.codeResult && result.codeResult.code) {
+            resolve(result.codeResult.code);
+          } else {
+            resolve("");
+          }
+        }
+      );
+    });
+  }
+
+
 
   async function startCamera() {
     try {
@@ -160,8 +223,26 @@
     document.getElementById('status').innerText = "⌛ 正在交叉辨識 條碼與文字...";
 
     try {
-      const reader = new ZXing.BrowserMultiFormatReader();
+      
       let foundText = "";
+
+      // ✅ 先裁切 scan-box 再用 Quagga 掃
+      const rect = getScanBoxRect();
+
+      // 試 2 個倍率（1x / 2x），常常 2x 會救回來
+      for (const scale of [1.0, 2.0]) {
+        const croppedDataUrl = cropCanvasToDataURL(rect, scale);
+        foundText = await quaggaDecodeFromDataURL(croppedDataUrl);
+        if (foundText) break;
+      }
+
+      // ✅ OCR fallback（維持你原本策略，但我建議 OCR 也用裁切區域）
+      if (!foundText) {
+        document.getElementById('status').innerText = "🧭 條碼讀取困難，嘗試辨識文字...";
+        const croppedDataUrl = cropCanvasToDataURL(rect, 2.0);
+        const ocr = await Tesseract.recognize(croppedDataUrl, 'eng');
+        foundText = ocr.data.text || "";
+      }
 
       // ✅ 存原始影像
       const srcCanvas = document.createElement('canvas');
