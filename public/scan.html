@@ -61,15 +61,28 @@
     function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
 
     function parseGS1(raw) {
-      let s = String(raw || '').replace(/\s+/g, '').replace(/[\[\{]/g, '(').replace(/[\]\}]/g, ')');
+      let s = String(raw || '').replace(/\s+/g, '');
       const out = {};
+      
+      // 如果有標準 GS1 括號格式
       const matches = s.matchAll(/\((\d{2})\)([^()]+)/g);
+      let foundAny = false;
       for (const m of matches) {
+        foundAny = true;
         const ai = m[1], val = m[2];
         if (ai === '01') out.gtin = val;
         if (ai === '17') out.exp = val;
         if (ai === '21') out.sn = val;
       }
+
+      // 如果完全沒抓到括號（純 OCR 情況），我們暴力猜測
+      if (!foundAny) {
+          // 試著抓出像日期 250821 的部分 (6位數字)
+          const dateMatch = s.match(/\d{6}/);
+          if (dateMatch) out.exp = dateMatch[0];
+          out.sn = s; // 剩下的就當序號
+      }
+
       out.uuid = (out.sn || s).substring(0, 12);
       return out;
     }
@@ -128,39 +141,65 @@
 
     // --- 修改後的完成邏輯：增加確認步驟 ---
     async function finish(text, method) {
-      // 1. 先停止相機，畫面定格
       scanning = false;
       stopEverything();
 
-      // 2. 解析資料給你看
       const gs1 = parseGS1(text);
-      const displayMsg = `
-        <div style="text-align:left; background:#eef2ff; padding:15px; border-radius:10px; margin:10px 0;">
-          <b>辨識方式：</b>${method}<br>
-          <b>UUID：</b>${gs1.uuid}<br>
-          <b>有效日期：</b>${gs1.exp || '未偵測'}<br>
-          <b>原始碼：</b><small>${text}</small>
+      
+      // 顯示診斷資訊，幫你抓出為什麼是 ES001
+      const diagnosis = `
+        <div style="text-align:left; background:#fff3cd; padding:15px; border-radius:10px; margin:10px 0; border:1px solid #ffeeba;">
+          <b>🛠️ 辨識診斷報告：</b><br>
+          辨識模式：<span style="color:blue">${method}</span><br>
+          原始抓取文字：<code style="background:#eee;">${text}</code><br><br>
+          <b>📦 預計存入資料：</b><br>
+          UUID (前12碼)：<b style="color:green">${gs1.uuid}</b><br>
+          有效日期：${gs1.exp || '無'}<br>
+          產品代碼：${gs1.gtin || '無'}
         </div>
       `;
       
-      setStatus(`<b style="color:blue">🔍 辨識完成，請確認資料</b>${displayMsg}`);
+      setStatus(`<h3>🔍 請確認辨識結果</h3>${diagnosis}`);
 
-      // 3. 彈出確認視窗，你按了才入庫
-      if (confirm(`確認入庫這筆物料嗎？\nUUID: ${gs1.uuid}`)) {
+      // 檢查 UUID 是否合理（例如太短可能是讀錯了）
+      if (gs1.uuid.length < 5) {
+          alert("警告：辨識出的序號太短 (" + gs1.uuid + ")，可能是讀到雜訊。請點擊取消並重拍。");
+      }
+
+      if (confirm(`確認要將序號 [${gs1.uuid}] 存入資料庫嗎？`)) {
         setBusy(true);
-        setStatus('🚀 正在寫入資料庫...');
+        setStatus('🚀 正在嘗試連線 API 寫入資料庫...');
+        
         try {
-          await postToBackend(text, method);
-          alert('✅ 入庫成功！');
-          location.href = 'index.html'; // 成功才跳轉
+          const res = await fetch('/api/stock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                item_uuid: gs1.uuid,
+                product_code: gs1.gtin || null,
+                expiry_date: gs1.exp || null,
+                from_loc: 'FACTORY',
+                to_loc: 'MAIN',
+                operator: `AUTO_${method}`
+            })
+          });
+
+          const result = await res.json();
+
+          if (res.ok) {
+            alert('✅ 入庫成功！');
+            location.href = 'index.html';
+          } else {
+            // 這裡最重要！如果資料庫報錯，會直接顯示在這裡
+            throw new Error(result.message || result.error || JSON.stringify(result));
+          }
         } catch (e) {
           setBusy(false);
-          setStatus(`<b style="color:red">❌ 入庫失敗：</b>${e.message}`);
-          alert('資料庫寫入失敗，請重試');
+          setStatus(`<b style="color:red">❌ API 寫入失敗</b><br>原因：${e.message}<br><br>請檢查 API Key 是否正確或資料表欄位是否匹配。`);
+          console.error("API Error:", e);
         }
       } else {
-        // 如果按取消，就恢復按鈕讓你重掃
-        setStatus('已取消入庫，可重新開啟相機');
+        setStatus('已取消。請按「開啟相機」重新嘗試。');
         btnStart.disabled = false;
       }
     }
