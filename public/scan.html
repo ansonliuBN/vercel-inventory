@@ -23,7 +23,7 @@
 <body>
   <div class="card">
     <h2>📷 智能辨識入庫</h2>
-    <p style="font-size: 13px; color: #666;">系統會自動切換「條碼掃描」與「文字辨識」</p>
+    <p style="font-size: 13px; color: #666;">系統將自動切換掃描與 OCR 辨識</p>
 
     <button id="btnStart" onclick="window.__startScan()">📸 開啟相機</button>
     <button id="btnStop" class="secondary" onclick="window.__stopScan()" disabled>⛔ 停止</button>
@@ -60,7 +60,6 @@
     function setStatus(h){ statusEl.innerHTML = h; }
     function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
 
-    // --- GS1 解析器 ---
     function parseGS1(raw) {
       let s = String(raw || '').replace(/\s+/g, '').replace(/[\[\{]/g, '(').replace(/[\]\}]/g, ')');
       const out = {};
@@ -71,12 +70,10 @@
         if (ai === '17') out.exp = val;
         if (ai === '21') out.sn = val;
       }
-      // 依要求：抓取 UUID 前 12 碼包含 "-"
       out.uuid = (out.sn || s).substring(0, 12);
       return out;
     }
 
-    // --- API 入庫 ---
     async function postToBackend(text, method) {
       const gs1 = parseGS1(text);
       const payload = {
@@ -94,18 +91,14 @@
       });
     }
 
-    // --- 影像截取 (用於旋轉解碼與 OCR) ---
     function captureROI(rot = 0) {
       const vw = video.videoWidth, vh = video.videoHeight;
       if (!vw || !vh) return false;
-      // 抓取中央 50% 區域進行優化
-      const sw = vw * 0.8, sh = vh * 0.3;
+      const sw = vw * 0.9, sh = vh * 0.3;
       const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
-      
       const outW = (rot === 90 || rot === 270) ? sh : sw;
       const outH = (rot === 90 || rot === 270) ? sw : sh;
       workCanvas.width = outW; workCanvas.height = outH;
-
       workCtx.save();
       if (rot !== 0) {
         workCtx.translate(outW/2, outH/2);
@@ -122,10 +115,10 @@
       if (!scanning) return;
       captureROI(0);
       const url = workCanvas.toDataURL('image/jpeg', 0.9);
-      setStatus('🧠 條碼掃描較難辨識，自動啟動文字辨識中...');
+      setStatus('🧠 自動啟動文字辨識中 (OCR)...');
       try {
         const res = await Tesseract.recognize(url, 'eng');
-        const cleanText = res.data.text.replace(/\s+/g, '').replace(/[Il|]/g, '1').replace(/O/g, '0');
+        let cleanText = res.data.text.replace(/\s+/g, '').replace(/[Il|]/g, '1').replace(/O/g, '0');
         if (cleanText.length > 5) {
           await postToBackend(cleanText, 'OCR');
           finish(cleanText, 'OCR');
@@ -137,7 +130,7 @@
       scanning = false;
       stopEverything();
       setStatus(`<b style="color:green">✅ 入庫成功 (${method})</b><br>${text}`);
-      alert(`已自動完成 ${method} 入庫！`);
+      alert(`已成功入庫！`);
       location.href = 'index.html';
     }
 
@@ -160,10 +153,17 @@
         scanning = true; lastSeenAt = Date.now();
         setBusy(false);
 
-        // 1. ZXing 自動掃描
-        const ZX = window.ZXingBrowser;
+        // --- 修正過的 ZXing 初始化 ---
+        const ZX = window.ZXingBrowser || window.ZXing;
+        if (!ZX) throw new Error("套件載入失敗");
+
         const hints = new Map();
-        hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+        // 確保使用正確的物件路徑
+        const DecodeHintType = ZX.DecodeHintType || window.ZXing.DecodeHintType;
+        if (DecodeHintType) {
+            hints.set(DecodeHintType.TRY_HARDER, true);
+        }
+        
         reader = new ZX.BrowserMultiFormatReader(hints);
         
         controls = await reader.decodeFromVideoDevice(null, video, async (res) => {
@@ -173,12 +173,10 @@
           }
         });
 
-        // 2. 自動監控與退路邏輯 (Watchdog)
         watchdogTimer = setInterval(async () => {
           if (!scanning) return;
           const idleTime = Date.now() - lastSeenAt;
-          
-          if (idleTime > 4000) { // 4秒掃不到，開始後台旋轉嘗試
+          if (idleTime > 4000) {
             const rots = [90, 270];
             for (let r of rots) {
               captureROI(r);
@@ -188,9 +186,9 @@
               } catch(e){}
             }
           }
-          if (idleTime > 10000) { // 10秒掃不到，自動切換 OCR
+          if (idleTime > 10000) {
             autoOCR();
-            lastSeenAt = Date.now(); // 重設計時，避免頻繁觸發 OCR
+            lastSeenAt = Date.now();
           }
         }, 2000);
 
