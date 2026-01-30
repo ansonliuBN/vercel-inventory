@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>智能辨識入庫 - 免費強攻版（Quagga + OCR AutoRotate）</title>
+<title>智能辨識入庫 - Tesseract OCR 全強攻版（GS1-128/UDI）</title>
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
@@ -96,7 +96,6 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
 <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
 
 <script>
@@ -107,7 +106,21 @@
   const ctx = workCanvas.getContext('2d');
   let stream = null;
 
-  // ---------- Helpers ----------
+  // ============================
+  // 1) 圖片前處理與 Base64 轉換
+  // ============================
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);   // data:image/...;base64,xxxx
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ============================
+  // Common normalize / parse
+  // ============================
   function normalizeText(raw) {
     return (raw || "")
       .replace(/\s+/g, '')
@@ -115,21 +128,13 @@
       .replace(/O/g, '0');
   }
 
-  function looksLikeGS1(text) {
-    const s = normalizeText(text);
-    const has01 = /\(01\)\d{14}/.test(s) || /01\d{14}/.test(s);
-    if (!has01) return false;
-    const has17 = /\(17\)\d{6}/.test(s) || /17\d{6}/.test(s);
-    const has10 = /\(10\)[A-Z0-9\-]{2,}/.test(s) || /10[A-Z0-9\-]{2,}/.test(s);
-    const has21 = /\(21\)[A-Z0-9\-]{2,}/.test(s) || /21[A-Z0-9\-]{2,}/.test(s);
-    return has17 || has10 || has21;
-  }
-
   function extractGS1Data(text) {
     const s = normalizeText(text);
 
     const m01 = s.match(/\(01\)(\d{14})/) || s.match(/01(\d{14})/);
     const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/);
+
+    // (21) Serial or (10) Lot
     const m21 = s.match(/\(21\)([A-Z0-9\-]+)/) || s.match(/21([A-Z0-9\-]+)/);
     const m10 = s.match(/\(10\)([A-Z0-9\-]+)/) || s.match(/10([A-Z0-9\-]+)/);
 
@@ -140,30 +145,19 @@
     };
   }
 
-  // ---------- Crop ----------
+  // ============================
+  // Crop area (match your scan box)
+  // ============================
   function getScanBoxRect() {
     const cw = workCanvas.width;
     const ch = workCanvas.height;
-
-    // 你原本是 85% x 40%，實務上條碼通常更扁一些
+    // 你原本 scan-box 視覺是 85%x40%，但實務上條碼通常更扁
+    // 你若要完全一致可改回 0.85 / 0.40
     const boxW = cw * 0.90;
     const boxH = ch * 0.22;
-
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
     const y = Math.max(0, Math.floor((ch - boxH) / 2));
-
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
-  }
-
-  function getScanRectsWithOffsets() {
-    const base = getScanBoxRect();
-    const offsets = [-0.18, -0.10, -0.05, 0, 0.05, 0.10, 0.18];
-    return offsets.map(k => ({
-      x: base.x,
-      y: Math.max(0, Math.floor(base.y + k * base.h)),
-      w: base.w,
-      h: base.h
-    }));
   }
 
   function cropCanvas(rect, scale = 1.0) {
@@ -179,7 +173,9 @@
     return canvas.toDataURL("image/jpeg", quality);
   }
 
-  // ---------- Light preprocess for OCR (free, small, helpful) ----------
+  // ============================
+  // Simple OCR enhance (still free)
+  // ============================
   function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
     const c = document.createElement("canvas");
     c.width = baseCanvas.width;
@@ -190,13 +186,11 @@
     const img = cctx.getImageData(0, 0, c.width, c.height);
     const d = img.data;
 
-    // grayscale + contrast
     for (let i=0; i<d.length; i+=4) {
       const r=d[i], g=d[i+1], b=d[i+2];
       let y = 0.299*r + 0.587*g + 0.114*b;
       y = (y - 128) * contrast + 128;
       y = Math.max(0, Math.min(255, y));
-      // binarize
       const v = (y > threshold) ? 255 : 0;
       d[i]=d[i+1]=d[i+2]=v;
     }
@@ -204,27 +198,9 @@
     return c;
   }
 
-  // ---------- Quagga ----------
-  function quaggaDecodeFromDataURL(dataUrl) {
-    return new Promise((resolve) => {
-      Quagga.decodeSingle(
-        {
-          src: dataUrl,
-          numOfWorkers: 0,
-          inputStream: { size: 1600 },
-          locator: { patchSize: "medium", halfSample: false },
-          decoder: { readers: ["code_128_reader"] }, // GS1-128 = Code128
-          locate: true
-        },
-        (result) => {
-          if (result && result.codeResult && result.codeResult.code) resolve(result.codeResult.code);
-          else resolve("");
-        }
-      );
-    });
-  }
-
-  // ---------- OCR AutoRotate (your preferred logic) ----------
+  // ============================
+  // Rotation helper
+  // ============================
   function rotateDataUrl(dataUrl, deg) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -247,11 +223,15 @@
     });
   }
 
+  // ============================
+  // 2) 暴力旋轉 OCR + 3) 關鍵字過濾
+  // ============================
   async function ocrBarcodeAutoRotate(inputDataUrl) {
     const angles = [0, 90, 180, 270];
 
     const options = {
       tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+      // 讓它偏向讀一行字串
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE
     };
 
@@ -260,7 +240,7 @@
       const dataUrl = (deg === 0) ? inputDataUrl : await rotateDataUrl(inputDataUrl, deg);
 
       const res = await Tesseract.recognize(dataUrl, 'eng', options);
-      let text = normalizeText(res.data.text || "");
+      const text = normalizeText(res.data.text || "");
 
       if (text.includes("(01)") && text.includes("(17)")) {
         return text;
@@ -269,96 +249,24 @@
     return "";
   }
 
-  // ---------- Camera / UI ----------
-  async function startCamera() {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } } });
-      video.srcObject = stream;
-      document.getElementById('displayArea').style.display = 'block';
-      document.getElementById('modeSelect').style.display = 'none';
-      document.getElementById('btnSnap').style.display = 'block';
-      document.getElementById('status').innerText = "請將條碼放入框內後拍照（避免反光、靠近一點）";
-    } catch(e) {
-      alert("相機啟動失敗，請確認權限");
-    }
-  }
-
-  function handleFileUpload(e) {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const img = new Image();
-      img.onload = () => {
-        workCanvas.width = img.width;
-        workCanvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-        preview.src = ev.target.result;
-        prepareUIForAnalysis();
-        triggerAnalysis();
-      };
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-  }
-
-  function takeSnapshot() {
-    workCanvas.width = video.videoWidth;
-    workCanvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-    preview.src = workCanvas.toDataURL('image/jpeg', 0.92);
-    prepareUIForAnalysis();
-    triggerAnalysis();
-  }
-
-  function prepareUIForAnalysis() {
-    video.style.display = 'none';
-    preview.style.display = 'block';
-    document.getElementById('displayArea').style.display = 'block';
-    document.getElementById('modeSelect').style.display = 'none';
-    document.getElementById('btnSnap').style.display = 'none';
-    document.getElementById('guidelines').style.display = 'none';
-  }
-
-  // ---------- MAIN ----------
-  async function triggerAnalysis() {
+  // ============================
+  // Main analysis (Tesseract ONLY)
+  // ============================
+  async function triggerAnalysisFromBase64(base64Img) {
     loader.style.display = 'block';
-    document.getElementById('status').innerText = "⌛ 先嘗試讀條碼（Quagga）...";
+    document.getElementById('status').innerText = "⌛ 正在準備 OCR 強攻...";
 
     try {
-      let foundText = "";
+      // 把 base64 圖先畫到 workCanvas（確保 crop 依據一致）
+      await drawBase64ToWorkCanvas(base64Img);
 
-      // 1) Quagga：多個 offset + 多倍率 crop
-      const rects = getScanRectsWithOffsets();
-      const scales = [1.0, 1.6, 2.2];
+      // 只 OCR scan-box 區域 + 放大 + 前處理
+      const rect = getScanBoxRect();
+      const crop = cropCanvas(rect, 2.6);
+      const enhanced = enhanceForOcr(crop, 1.6, 170);
+      const ocrTarget = canvasToDataURL(enhanced, 0.95);
 
-      for (const rect of rects) {
-        for (const scale of scales) {
-          const croppedCanvas = cropCanvas(rect, scale);
-          const croppedDataUrl = canvasToDataURL(croppedCanvas, 0.95);
-
-          const candidate = await quaggaDecodeFromDataURL(croppedDataUrl);
-          if (candidate && looksLikeGS1(candidate)) {
-            foundText = candidate;
-            break;
-          }
-        }
-        if (foundText) break;
-      }
-
-      // 2) Quagga 失敗 → OCR 暴力旋轉（你的策略）
-      if (!foundText) {
-        document.getElementById('status').innerText = "🧨 條碼沒抓到，啟動 OCR 旋轉強攻...";
-        const rect = getScanBoxRect();
-        const rawCrop = cropCanvas(rect, 2.4);
-        const enhanced = enhanceForOcr(rawCrop, 1.6, 170);
-        const ocrTarget = canvasToDataURL(enhanced, 0.95);
-
-        foundText = await ocrBarcodeAutoRotate(ocrTarget);
-      }
-
-      // 3) 抽資料
+      const foundText = await ocrBarcodeAutoRotate(ocrTarget);
       const data = extractGS1Data(foundText);
 
       document.getElementById('editGtin').value = data.gtin;
@@ -378,7 +286,74 @@
     }
   }
 
-  // ---------- Submit (unchanged) ----------
+  function drawBase64ToWorkCanvas(base64Img) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        workCanvas.width = img.width;
+        workCanvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        resolve();
+      };
+      img.src = base64Img;
+    });
+  }
+
+  // ============================
+  // Camera / UI
+  // ============================
+  async function startCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 } }
+      });
+      video.srcObject = stream;
+      document.getElementById('displayArea').style.display = 'block';
+      document.getElementById('modeSelect').style.display = 'none';
+      document.getElementById('btnSnap').style.display = 'block';
+      document.getElementById('status').innerText = "請將條碼放入框內後拍照（避免反光、靠近一點）";
+    } catch(e) {
+      alert("相機啟動失敗，請確認權限");
+    }
+  }
+
+  async function handleFileUpload(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    const base64 = await fileToBase64(file);
+
+    preview.src = base64;
+    prepareUIForAnalysis();
+
+    await triggerAnalysisFromBase64(base64);
+  }
+
+  async function takeSnapshot() {
+    workCanvas.width = video.videoWidth;
+    workCanvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
+
+    const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
+
+    preview.src = base64;
+    prepareUIForAnalysis();
+
+    await triggerAnalysisFromBase64(base64);
+  }
+
+  function prepareUIForAnalysis() {
+    video.style.display = 'none';
+    preview.style.display = 'block';
+    document.getElementById('displayArea').style.display = 'block';
+    document.getElementById('modeSelect').style.display = 'none';
+    document.getElementById('btnSnap').style.display = 'none';
+    document.getElementById('guidelines').style.display = 'none';
+  }
+
+  // ============================
+  // Submit (UNCHANGED)
+  // ============================
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
     const payload = {
