@@ -96,7 +96,8 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
+<script src="https://unpkg.com/tesseract.js@5.5.2/dist/tesseract.min.js"></script>
+
 
 <script>
   const video = document.getElementById('video');
@@ -232,7 +233,7 @@
     const options = {
       tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
       // 讓它偏向讀一行字串
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE
+      tessedit_pageseg_mode: 7
     };
 
     for (const deg of angles) {
