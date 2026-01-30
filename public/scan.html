@@ -7,7 +7,7 @@
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
-  
+
   /* 按鈕樣式 */
   .btn-group { display: flex; gap: 10px; margin-top: 15px; }
   button { flex: 1; padding: 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; color: white; transition: 0.3s; }
@@ -21,7 +21,7 @@
   .camera-wrap { position: relative; width: 100%; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; border: 2px solid #ddd; background:#000; margin-top: 15px; display: none; }
   video, #photoPreview { width:100%; height:100%; object-fit: cover; }
   #photoPreview { display: none; }
-  
+
   .overlay { position:absolute; inset:0; pointer-events:none; }
   .scan-box { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:85%; height:40%; border:1px solid rgba(255,255,255,0.3); border-radius:12px; box-shadow:0 0 0 9999px rgba(0,0,0,0.5); }
   .corner { position:absolute; width:20px; height:20px; border:4px solid #00ffb3; }
@@ -37,7 +37,7 @@
   @keyframes fadeIn { from {opacity:0; transform:translateY(10px);} to {opacity:1; transform:translateY(0);} }
   .review-form label { font-size: 13px; color: #555; font-weight: bold; display: block; margin-top: 10px; }
   .review-form input, .review-form select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 4px; }
-  
+
   .loader { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
   canvas#workCanvas { display:none; }
@@ -49,7 +49,7 @@
   <button class="btn-back" onclick="location.href='index.html'">⬅️ 返回總表</button>
   <div style="clear: both;"></div>
   <h2>📦 智能入庫複核</h2>
-  
+
   <div class="btn-group" id="modeSelect">
     <button class="btn-cam" onclick="startCamera()">📸 開啟相機</button>
     <button class="btn-file" onclick="document.getElementById('fileInput').click()">📁 上傳照片</button>
@@ -58,7 +58,7 @@
 
   <div class="camera-wrap" id="displayArea">
     <video id="video" autoplay muted playsinline></video>
-    <img id="photoPreview">
+    <img id="photoPreview" alt="preview">
     <div class="overlay" id="guidelines">
       <div class="scan-box">
         <div class="corner c1"></div><div class="corner c2"></div>
@@ -74,23 +74,23 @@
 
   <div id="reviewArea" class="review-form">
     <h3 style="margin:0; color:#7360f2; border-bottom:1px solid #ddd; padding-bottom:8px;">🔍 辨識結果確認</h3>
-    
+
     <label>型號 (GTIN/料號):</label>
     <input type="text" id="editGtin" placeholder="尚未偵測">
-    
+
     <label>批號 (Lot/SN/UUID):</label>
     <input type="text" id="editLot" placeholder="尚未偵測">
-    
+
     <label>有效日期 (格式: YYMMDD):</label>
     <input type="text" id="editExp" placeholder="尚未偵測">
-    
+
     <label>入庫數量 (以 10 為單位):</label>
     <select id="editQty">
       <option value="10">10</option><option value="20">20</option>
       <option value="30">30</option><option value="40">40</option>
       <option value="50">50</option><option value="100">100</option>
     </select>
-    
+
     <button class="btn-import" onclick="finalSubmit()">✅ 確認資料，匯入庫存</button>
     <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px;">🔄 重拍一張</button>
   </div>
@@ -99,7 +99,7 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-//<script src="https://unpkg.com/@zxing/library@0.19.1"></script>
+<!-- Libraries -->
 <script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
 <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
 
@@ -111,12 +111,13 @@
   const ctx = workCanvas.getContext('2d');
   let stream = null;
 
+  // ---------- Helpers: crop / preprocess ----------
   function getScanBoxRect() {
-    // 你的 scan-box：width 85%, height 40%, 置中
     const cw = workCanvas.width;
     const ch = workCanvas.height;
 
-    const boxW = cw * 0.85;
+    // ✅ 做成「更扁」的條碼掃描帶，降低干擾
+    const boxW = cw * 0.90;
     const boxH = ch * 0.22;
 
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
@@ -127,7 +128,7 @@
 
   function getScanRectsWithOffsets() {
     const base = getScanBoxRect();
-    const offsets = [-0.12, -0.06, 0, 0.06, 0.12]; // 依高度百分比上下微移
+    const offsets = [-0.18, -0.10, -0.05, 0, 0.05, 0.10, 0.18]; // 上下多掃幾次更穩
     return offsets.map(k => ({
       x: base.x,
       y: Math.max(0, Math.floor(base.y + k * base.h)),
@@ -136,40 +137,101 @@
     }));
   }
 
-
-  function cropCanvasToDataURL(rect, scale = 1.0) {
+  function cropCanvasToDataURL(rect, scale = 1.0, quality = 0.95) {
     const crop = document.createElement("canvas");
-    crop.width = Math.floor(rect.w * scale);
-    crop.height = Math.floor(rect.h * scale);
+    crop.width = Math.max(1, Math.floor(rect.w * scale));
+    crop.height = Math.max(1, Math.floor(rect.h * scale));
     const cctx = crop.getContext("2d");
 
-    // 裁切 + 可選擇放大（scale > 1 可提升 1D 條碼成功率）
     cctx.drawImage(
       workCanvas,
       rect.x, rect.y, rect.w, rect.h,
       0, 0, crop.width, crop.height
     );
 
-    return crop.toDataURL("image/jpeg", 0.95);
+    return crop.toDataURL("image/jpeg", quality);
   }
 
+  // 基本灰階 + 對比拉高（很便宜但對 1D 條碼常有幫助）
+  function enhanceCanvasImageData(dataUrl) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const cctx = c.getContext('2d');
+        cctx.drawImage(img, 0, 0);
+
+        const id = cctx.getImageData(0, 0, c.width, c.height);
+        const d = id.data;
+
+        // 灰階 + 簡單對比
+        // 公式：new = (old - 128) * contrast + 128
+        const contrast = 1.35;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i+1], b = d[i+2];
+          let y = 0.299*r + 0.587*g + 0.114*b;
+          y = (y - 128) * contrast + 128;
+          y = Math.max(0, Math.min(255, y));
+          d[i] = d[i+1] = d[i+2] = y;
+        }
+        cctx.putImageData(id, 0, 0);
+        resolve(c.toDataURL("image/jpeg", 0.95));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  // ---------- GS1 parsing / validation ----------
+  function normalizeText(raw) {
+    return (raw || "")
+      .replace(/\s+/g, '')
+      .replace(/[Il|]/g, '1')
+      .replace(/O/g, '0');
+  }
+
+  function parseGS1(raw) {
+    const s = normalizeText(raw);
+    const out = { gtin: '', exp: '', lot: '' };
+
+    const m01 = s.match(/\(01\)(\d{14})/) || s.match(/01(\d{14})/);
+    if (m01) out.gtin = m01[1];
+
+    const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/);
+    if (m17) out.exp = m17[1];
+
+    // Lot (10) 可能到下一個 AI 前結束，這裡用較保守抓法
+    const m10 = s.match(/\(10\)([A-Z0-9\-]{2,})/) || s.match(/10([A-Z0-9\-]{2,})/);
+    if (m10) out.lot = m10[1];
+
+    return out;
+  }
+
+  function looksLikeGS1(text) {
+    const s = normalizeText(text);
+
+    // 必須有 GTIN 14 碼
+    const has01 = /\(01\)\d{14}/.test(s) || /01\d{14}/.test(s);
+    if (!has01) return false;
+
+    // 至少要有 exp 或 lot 其中之一
+    const has17 = /\(17\)\d{6}/.test(s) || /17\d{6}/.test(s);
+    const has10 = /\(10\)[A-Z0-9\-]{2,}/.test(s) || /10[A-Z0-9\-]{2,}/.test(s);
+
+    return has17 || has10;
+  }
+
+  // ---------- Quagga ----------
   function quaggaDecodeFromDataURL(dataUrl) {
     return new Promise((resolve) => {
       Quagga.decodeSingle(
         {
           src: dataUrl,
-          numOfWorkers: 0, // decodeSingle 建議 0
-          inputStream: {
-            size: 1600  // 解析度，太小會讀不到，太大會慢
-          },
-          locator: {
-            patchSize: "medium",
-            halfSample: false
-          },
-          decoder: {
-            // GS1-128 本質是 Code128
-            readers: ["code_128_reader"]
-          },
+          numOfWorkers: 0,
+          inputStream: { size: 1600 },
+          locator: { patchSize: "medium", halfSample: false },
+          decoder: { readers: ["code_128_reader"] },
           locate: true
         },
         (result) => {
@@ -183,26 +245,56 @@
     });
   }
 
+  async function decodeBarcodeRobust() {
+    const rects = getScanRectsWithOffsets();
+    const scales = [1.0, 1.6, 2.2, 2.8]; // 多一個倍率，救小條碼
+    const qualities = [0.92, 0.98];      // JPEG 壓縮也會影響細線
 
+    for (const rect of rects) {
+      for (const scale of scales) {
+        for (const q of qualities) {
+          const cropped = cropCanvasToDataURL(rect, scale, q);
 
+          // 原圖試一次
+          let cand = await quaggaDecodeFromDataURL(cropped);
+          if (cand && looksLikeGS1(cand)) return cand;
+
+          // 增強後再試一次（有時候反光/灰階會救回來）
+          const enhanced = await enhanceCanvasImageData(cropped);
+          cand = await quaggaDecodeFromDataURL(enhanced);
+          if (cand && looksLikeGS1(cand)) return cand;
+        }
+      }
+    }
+    return "";
+  }
+
+  // ---------- UI / camera ----------
   async function startCamera() {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } } });
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 } }
+      });
       video.srcObject = stream;
       document.getElementById('displayArea').style.display = 'block';
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
-      document.getElementById('status').innerText = "請將條碼文字放入框內後拍照";
-    } catch(e) { alert("相機啟動失敗，請確認權限"); }
+      document.getElementById('status').innerText = "請將條碼放入框內後拍照（避免反光、盡量靠近）";
+    } catch(e) {
+      alert("相機啟動失敗，請確認權限");
+    }
   }
 
   function handleFileUpload(e) {
-    const file = e.target.files[0];
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const img = new Image();
       img.onload = () => {
-        workCanvas.width = img.width; workCanvas.height = img.height;
+        workCanvas.width = img.width;
+        workCanvas.height = img.height;
         ctx.drawImage(img, 0, 0);
         preview.src = ev.target.result;
         prepareUIForAnalysis();
@@ -214,133 +306,77 @@
   }
 
   function takeSnapshot() {
-    workCanvas.width = video.videoWidth; workCanvas.height = video.videoHeight;
+    workCanvas.width = video.videoWidth;
+    workCanvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-    const dataUrl = workCanvas.toDataURL('image/jpeg', 0.9);
+
+    const dataUrl = workCanvas.toDataURL('image/jpeg', 0.92);
     preview.src = dataUrl;
+
     prepareUIForAnalysis();
     triggerAnalysis(dataUrl);
   }
 
   function prepareUIForAnalysis() {
-    video.style.display = 'none'; preview.style.display = 'block';
+    video.style.display = 'none';
+    preview.style.display = 'block';
     document.getElementById('displayArea').style.display = 'block';
     document.getElementById('modeSelect').style.display = 'none';
     document.getElementById('btnSnap').style.display = 'none';
     document.getElementById('guidelines').style.display = 'none';
   }
 
+  // ---------- Main pipeline ----------
   async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
-    document.getElementById('status').innerText = "⌛ 正在交叉辨識 條碼與文字...";
+    document.getElementById('status').innerText = "⌛ 正在辨識條碼（優先）...";
 
     try {
-      let foundText = "";
+      // 1) 條碼優先
+      let foundText = await decodeBarcodeRobust();
 
-      const rects = getScanRectsWithOffsets();
-      const scales = [1.0, 1.6, 2.2]; // ✅ 不要只試 1/2，試幾個比較穩
-
-      // 1) Quagga 先跑多次 crop + 多倍率
-      for (const rect of rects) {
-        for (const scale of scales) {
-          const croppedDataUrl = cropCanvasToDataURL(rect, scale);
-          const candidate = await quaggaDecodeFromDataURL(croppedDataUrl);
-
-          // ✅ 只有看起來像 GS1 才接受
-          if (candidate && looksLikeGS1(candidate)) {
-            foundText = candidate;
-            break;
-          }
-        }
-        if (foundText) break;
-      }
-
-      // 2) OCR fallback（只 OCR scan 區域，別 OCR 全圖）
+      // 2) OCR fallback（只 OCR 中間掃描帶 + 放大 + 增強）
       if (!foundText) {
         document.getElementById('status').innerText = "🧭 條碼讀取困難，嘗試辨識文字...";
-        // OCR 用中間那個 rect + 放大
         const rect = getScanBoxRect();
-        const croppedDataUrl = cropCanvasToDataURL(rect, 2.2);
-        const ocr = await Tesseract.recognize(croppedDataUrl, 'eng');
+        const cropped = cropCanvasToDataURL(rect, 2.8, 0.98);
+        const enhanced = await enhanceCanvasImageData(cropped);
+
+        const ocr = await Tesseract.recognize(enhanced, 'eng');
         foundText = ocr.data.text || "";
       }
 
       const gs1 = parseGS1(foundText);
 
       document.getElementById('editGtin').value = gs1.gtin;
-      document.getElementById('editLot').value = gs1.lot || foundText.replace(/[^A-Za-z0-9]/g, '').substring(0,12);
+      document.getElementById('editLot').value = gs1.lot || normalizeText(foundText).replace(/[^A-Za-z0-9]/g, '').substring(0,12);
       document.getElementById('editExp').value = gs1.exp;
 
       loader.style.display = 'none';
       document.getElementById('reviewArea').style.display = 'block';
-      document.getElementById('status').innerText = "辨識完成，請複核資料。";
+      document.getElementById('status').innerText = gs1.gtin ? "辨識完成，請複核資料。" : "⚠️ 沒抓到完整 GS1，請人工複核或重拍。";
     } catch (err) {
       alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
 
-
-
-    function rotateCanvasFromSource(sourceCanvas, deg) {
-    const srcW = sourceCanvas.width;
-    const srcH = sourceCanvas.height;
-
-    const tempCanvas = document.createElement('canvas');
-    const tCtx = tempCanvas.getContext('2d');
-
-    const rad = deg * Math.PI / 180;
-
-    // 90/270 會交換寬高
-    if (deg % 180 !== 0) {
-      tempCanvas.width = srcH;
-      tempCanvas.height = srcW;
-    } else {
-      tempCanvas.width = srcW;
-      tempCanvas.height = srcH;
-    }
-
-    tCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
-    tCtx.rotate(rad);
-    tCtx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2);
-
-    // 寫回 workCanvas
-    workCanvas.width = tempCanvas.width;
-    workCanvas.height = tempCanvas.height;
-    ctx.drawImage(tempCanvas, 0, 0);
-  }
-
-
-  function parseGS1(raw) {
-    let s = raw.replace(/\s+/g, '').replace(/[Il|]/g, '1').replace(/O/g, '0');
-    const out = { gtin: '', exp: '', lot: '' };
-    const m01 = s.match(/\(01\)(\d+)/) || s.match(/01(\d{14})/); if(m01) out.gtin = m01[1];
-    const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/); if(m17) out.exp = m17[1];
-    const m10 = s.match(/\(10\)([A-Z0-9-]+)/) || s.match(/10([A-Z0-9-]+)/); if(m10) out.lot = m10[1];
-    return out;
-  }
-
-  function looksLikeGS1(text) {
-    const s = (text || "").replace(/\s+/g, '');
-    // 兩種常見：有括號 (01)(17)(10)，或純 AI 01/17/10
-    const has01 = /\(01\)\d{14}/.test(s) || /01\d{14}/.test(s);
-    const has17 = /\(17\)\d{6}/.test(s) || /17\d{6}/.test(s);
-    const has10 = /\(10\)[A-Z0-9-]{2,}/.test(s) || /10[A-Z0-9-]{2,}/.test(s);
-    return has01 && (has17 || has10); // 至少要有 01 + (17 或 10)
-  }
-
-
+  // ---------- Submit (unchanged backend) ----------
   async function finalSubmit() {
-    const qty = parseInt(document.getElementById('editQty').value);
+    const qty = parseInt(document.getElementById('editQty').value, 10);
+
     const payload = {
       item_uuid: document.getElementById('editLot').value,
       product_code: document.getElementById('editGtin').value,
       expiry_date: document.getElementById('editExp').value,
       quantity: qty,
-      from_loc: 'FACTORY', to_loc: 'MAIN', operator: 'MANUAL_REVIEW'
+      from_loc: 'FACTORY',
+      to_loc: 'MAIN',
+      operator: 'MANUAL_REVIEW'
     };
 
     loader.style.display = 'block';
+
     const res = await fetch('/api/stock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
