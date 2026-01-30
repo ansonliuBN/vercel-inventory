@@ -3,23 +3,40 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>智能入庫 - 手動複核版</title>
+<title>智能辨識入庫 - 最終旗艦版</title>
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; text-align:center; margin:0; }
   .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+  
+  /* 按鈕樣式 */
   .btn-group { display: flex; gap: 10px; margin-top: 15px; }
-  button { flex: 1; padding: 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; color: white; }
+  button { flex: 1; padding: 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; color: white; transition: 0.3s; }
   .btn-cam { background: #7360f2; }
   .btn-file { background: #2d9cdb; }
-  .btn-import { background: #27ae60; width: 100%; margin-top: 20px; font-size: 20px; }
+  .btn-snap { background: #27ae60; width: 100%; margin-top: 10px; font-size: 18px; }
+  .btn-import { background: #27ae60; width: 100%; margin-top: 15px; font-size: 20px; box-shadow: 0 4px 10px rgba(39,174,96,0.3); }
+  .btn-back { background: #666; width: auto; font-size: 14px; float: left; padding: 8px 15px; }
+
+  /* 顯示區域與導引框 */
   .camera-wrap { position: relative; width: 100%; aspect-ratio: 4/3; border-radius: 12px; overflow: hidden; border: 2px solid #ddd; background:#000; margin-top: 15px; display: none; }
   video, #photoPreview { width:100%; height:100%; object-fit: cover; }
   #photoPreview { display: none; }
   
-  /* 編輯表單樣式 */
-  .review-form { text-align: left; background: #f9f9ff; padding: 15px; border-radius: 12px; border: 1px solid #7360f2; margin-top: 15px; display: none; }
-  .review-form label { font-size: 14px; color: #666; font-weight: bold; display: block; margin-top: 10px; }
-  .review-form input, .review-form select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 5px; }
+  .overlay { position:absolute; inset:0; pointer-events:none; }
+  .scan-box { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:85%; height:40%; border:1px solid rgba(255,255,255,0.3); border-radius:12px; box-shadow:0 0 0 9999px rgba(0,0,0,0.5); }
+  .corner { position:absolute; width:20px; height:20px; border:4px solid #00ffb3; }
+  .c1 { left:-2px; top:-2px; border-right:none; border-bottom:none; border-top-left-radius:12px; }
+  .c2 { right:-2px; top:-2px; border-left:none; border-bottom:none; border-top-right-radius:12px; }
+  .c3 { left:-2px; bottom:-2px; border-right:none; border-top:none; border-bottom-left-radius:12px; }
+  .c4 { right:-2px; bottom:-2px; border-left:none; border-top:none; border-bottom-right-radius:12px; }
+  .scan-line { position:absolute; left:5%; top:10%; width:90%; height:2px; background:linear-gradient(90deg,transparent,#00ffb3,transparent); animation: move 2s infinite; }
+  @keyframes move { 0%, 100% { top: 10%; } 50% { top: 90%; } }
+
+  /* 複核表單 */
+  .review-form { text-align: left; background: #f9f9ff; padding: 15px; border-radius: 12px; border: 2px solid #7360f2; margin-top: 15px; display: none; animation: fadeIn 0.5s; }
+  @keyframes fadeIn { from {opacity:0; transform:translateY(10px);} to {opacity:1; transform:translateY(0);} }
+  .review-form label { font-size: 13px; color: #555; font-weight: bold; display: block; margin-top: 10px; }
+  .review-form input, .review-form select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 4px; }
   
   .loader { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
@@ -29,9 +46,9 @@
 <body>
 
 <div class="card">
-  <button onclick="location.href='index.html'" style="color:#666; background:none; float:left;">⬅️ 返回</button>
-  <div style="clear:both;"></div>
-  <h2>📦 入庫複核系統</h2>
+  <button class="btn-back" onclick="location.href='index.html'">⬅️ 返回總表</button>
+  <div style="clear: both;"></div>
+  <h2>📦 智能入庫複核</h2>
   
   <div class="btn-group" id="modeSelect">
     <button class="btn-cam" onclick="startCamera()">📸 開啟相機</button>
@@ -42,39 +59,43 @@
   <div class="camera-wrap" id="displayArea">
     <video id="video" autoplay muted playsinline></video>
     <img id="photoPreview">
+    <div class="overlay" id="guidelines">
+      <div class="scan-box">
+        <div class="corner c1"></div><div class="corner c2"></div>
+        <div class="corner c3"></div><div class="corner c4"></div>
+        <div class="scan-line"></div>
+      </div>
+    </div>
   </div>
 
-  <button id="btnSnap" class="btn-cam" onclick="takeSnapshot()" style="display:none; width:100%; margin-top:10px;">📸 拍照辨識</button>
+  <button id="btnSnap" class="btn-snap" onclick="takeSnapshot()" style="display:none;">📸 點擊拍照並分析</button>
 
   <div class="loader" id="loader"></div>
 
   <div id="reviewArea" class="review-form">
-    <h3 style="margin:0; color:#7360f2;">🔍 請確認資料</h3>
+    <h3 style="margin:0; color:#7360f2; border-bottom:1px solid #ddd; padding-bottom:8px;">🔍 辨識結果確認</h3>
     
-    <label>型號 (料號/GTIN):</label>
-    <input type="text" id="editGtin">
+    <label>型號 (GTIN/料號):</label>
+    <input type="text" id="editGtin" placeholder="尚未偵測">
     
-    <label>批號 (序號/Lot):</label>
-    <input type="text" id="editLot">
+    <label>批號 (Lot/SN/UUID):</label>
+    <input type="text" id="editLot" placeholder="尚未偵測">
     
-    <label>過期時間 (YYMMDD):</label>
-    <input type="text" id="editExp">
+    <label>有效日期 (格式: YYMMDD):</label>
+    <input type="text" id="editExp" placeholder="尚未偵測">
     
     <label>入庫數量 (以 10 為單位):</label>
     <select id="editQty">
-      <option value="10">10</option>
-      <option value="20">20</option>
-      <option value="30">30</option>
-      <option value="40">40</option>
-      <option value="50">50</option>
-      <option value="100">100</option>
+      <option value="10">10</option><option value="20">20</option>
+      <option value="30">30</option><option value="40">40</option>
+      <option value="50">50</option><option value="100">100</option>
     </select>
     
-    <button class="btn-import" onclick="finalSubmit()">✅ 確認匯入資料庫</button>
-    <button onclick="location.reload()" style="background:#eee; color:#666; width:100%; margin-top:10px;">🔄 重拍/取消</button>
+    <button class="btn-import" onclick="finalSubmit()">✅ 確認資料，匯入庫存</button>
+    <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px;">🔄 重拍一張</button>
   </div>
 
-  <div id="status" style="margin-top:10px; color:#666;"></div>
+  <div id="status" style="margin-top:10px; font-size:13px; color:#888;"></div>
   <canvas id="workCanvas"></canvas>
 </div>
 
@@ -89,28 +110,30 @@
   const ctx = workCanvas.getContext('2d');
   let stream = null;
 
-  // --- 相機與檔案處理 ---
   async function startCamera() {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-    video.srcObject = stream;
-    document.getElementById('displayArea').style.display = 'block';
-    document.getElementById('modeSelect').style.display = 'none';
-    document.getElementById('btnSnap').style.display = 'block';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 } } });
+      video.srcObject = stream;
+      document.getElementById('displayArea').style.display = 'block';
+      document.getElementById('modeSelect').style.display = 'none';
+      document.getElementById('btnSnap').style.display = 'block';
+      document.getElementById('status').innerText = "請將條碼文字放入框內後拍照";
+    } catch(e) { alert("相機啟動失敗，請確認權限"); }
   }
 
   function handleFileUpload(e) {
     const file = e.target.files[0];
     const reader = new FileReader();
     reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-            workCanvas.width = img.width; workCanvas.height = img.height;
-            ctx.drawImage(img, 0, 0);
-            preview.src = ev.target.result;
-            showPreview();
-            triggerAnalysis(ev.target.result);
-        };
-        img.src = ev.target.result;
+      const img = new Image();
+      img.onload = () => {
+        workCanvas.width = img.width; workCanvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        preview.src = ev.target.result;
+        prepareUIForAnalysis();
+        triggerAnalysis(ev.target.result);
+      };
+      img.src = ev.target.result;
     };
     reader.readAsDataURL(file);
   }
@@ -118,67 +141,85 @@
   function takeSnapshot() {
     workCanvas.width = video.videoWidth; workCanvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
-    const dataUrl = workCanvas.toDataURL('image/jpeg');
+    const dataUrl = workCanvas.toDataURL('image/jpeg', 0.9);
     preview.src = dataUrl;
-    showPreview();
+    prepareUIForAnalysis();
     triggerAnalysis(dataUrl);
   }
 
-  function showPreview() {
+  function prepareUIForAnalysis() {
     video.style.display = 'none'; preview.style.display = 'block';
     document.getElementById('displayArea').style.display = 'block';
     document.getElementById('modeSelect').style.display = 'none';
     document.getElementById('btnSnap').style.display = 'none';
+    document.getElementById('guidelines').style.display = 'none';
   }
 
-  // --- 辨識與表單顯示 ---
   async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
+    document.getElementById('status').innerText = "⌛ 正在交叉辨識 條碼與文字...";
     try {
       const reader = new ZXing.BrowserMultiFormatReader();
-      let raw = "";
-      try {
-        const res = await reader.decodeFromCanvas(workCanvas);
-        raw = res.getText();
-      } catch(e) {
-        const ocr = await Tesseract.recognize(imgData, 'eng');
-        raw = ocr.data.text;
+      let foundText = "";
+      
+      // 旋轉辨識 (0, 90, 270 度)
+      for (let rot of [0, 90, 270]) {
+        if (rot !== 0) rotateCanvas(rot);
+        try {
+          const res = await reader.decodeFromCanvas(workCanvas);
+          if (res) { foundText = res.getText(); break; }
+        } catch(e) {}
       }
-      
-      const gs1 = parseGS1(raw);
-      
-      // 填入表單供檢查
+
+      // OCR Fallback
+      if (!foundText) {
+        document.getElementById('status').innerText = "🧭 條碼讀取困難，嘗試辨識文字...";
+        const ocr = await Tesseract.recognize(imgData, 'eng');
+        foundText = ocr.data.text;
+      }
+
+      const gs1 = parseGS1(foundText);
       document.getElementById('editGtin').value = gs1.gtin;
-      document.getElementById('editLot').value = gs1.lot || gs1.raw.substring(0,12);
+      document.getElementById('editLot').value = gs1.lot || foundText.replace(/[^A-Za-z0-9]/g, '').substring(0,12);
       document.getElementById('editExp').value = gs1.exp;
       
       loader.style.display = 'none';
       document.getElementById('reviewArea').style.display = 'block';
+      document.getElementById('status').innerText = "辨識完成，請複核資料。";
     } catch(err) {
-      alert("辨識失敗，請重試");
+      alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
 
+  function rotateCanvas(deg) {
+    const tempCanvas = document.createElement('canvas');
+    const tCtx = tempCanvas.getContext('2d');
+    tempCanvas.width = workCanvas.height; tempCanvas.height = workCanvas.width;
+    tCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
+    tCtx.rotate(deg * Math.PI / 180);
+    tCtx.drawImage(preview, -workCanvas.width/2, -workCanvas.height/2);
+    workCanvas.width = tempCanvas.width; workCanvas.height = tempCanvas.height;
+    ctx.drawImage(tempCanvas, 0, 0);
+  }
+
   function parseGS1(raw) {
-    let s = raw.replace(/\s+/g, '');
-    const out = { raw: s, gtin: '', exp: '', lot: '' };
-    const m01 = s.match(/\(01\)(\d+)/); if(m01) out.gtin = m01[1];
-    const m17 = s.match(/\(17\)(\d+)/); if(m17) out.exp = m17[1];
-    const m10 = s.match(/\(10\)([A-Z0-9-]+)/); if(m10) out.lot = m10[1];
+    let s = raw.replace(/\s+/g, '').replace(/[Il|]/g, '1').replace(/O/g, '0');
+    const out = { gtin: '', exp: '', lot: '' };
+    const m01 = s.match(/\(01\)(\d+)/) || s.match(/01(\d{14})/); if(m01) out.gtin = m01[1];
+    const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/); if(m17) out.exp = m17[1];
+    const m10 = s.match(/\(10\)([A-Z0-9-]+)/) || s.match(/10([A-Z0-9-]+)/); if(m10) out.lot = m10[1];
     return out;
   }
 
-  // --- 最終匯入 ---
   async function finalSubmit() {
+    const qty = parseInt(document.getElementById('editQty').value);
     const payload = {
       item_uuid: document.getElementById('editLot').value,
       product_code: document.getElementById('editGtin').value,
       expiry_date: document.getElementById('editExp').value,
-      quantity: parseInt(document.getElementById('editQty').value),
-      from_loc: 'FACTORY',
-      to_loc: 'MAIN',
-      operator: 'MANUAL_REVIEW'
+      quantity: qty,
+      from_loc: 'FACTORY', to_loc: 'MAIN', operator: 'MANUAL_REVIEW'
     };
 
     loader.style.display = 'block';
@@ -189,11 +230,11 @@
     });
 
     if (res.ok) {
-      alert("✅ 匯入成功！共 " + payload.quantity + " 件");
+      alert("✅ 匯入成功！已存入 " + qty + " 件物料。");
       location.href = 'index.html';
     } else {
-      const err = await res.json();
-      alert("❌ 失敗: " + (err.message || "資料庫拒絕寫入"));
+      const err = await res.json().catch(() => ({message: "連線異常"}));
+      alert("❌ 失敗: " + err.message);
       loader.style.display = 'none';
     }
   }
