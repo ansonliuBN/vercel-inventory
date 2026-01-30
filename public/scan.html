@@ -442,10 +442,12 @@
       // 這裡我沿用你已有的：getScanBoxRect / cropCanvasToDataURL / quaggaDecodeFromDataURL / looksLikeGS1
       const rects = getScanRectsWithOffsets();
       const scales = [1.0, 1.6, 2.2];
+      
 
       for (const rect of rects) {
         for (const scale of scales) {
-          const croppedDataUrl = cropCanvasToDataURL(rect, scale);
+          const croppedCanvas = cropCanvas(rect, scale);
+          const croppedDataUrl = croppedCanvas.toDataURL('image/jpeg', 0.95);
           const candidate = await quaggaDecodeFromDataURL(croppedDataUrl);
           if (candidate && looksLikeGS1(candidate)) {
             foundText = candidate;
