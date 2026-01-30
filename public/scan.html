@@ -426,6 +426,11 @@
     document.getElementById('guidelines').style.display = 'none';
   }
 
+  function canvasToDataURL(canvas, quality = 0.95) {
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+
   async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
     document.getElementById('status').innerText = "⌛ 先嘗試讀條碼（Quagga）...";
@@ -454,7 +459,9 @@
       if (!foundText) {
         document.getElementById('status').innerText = "🧨 條碼沒抓到，啟動 OCR 暴力旋轉強攻...";
         const rect = getScanBoxRect();
-        const ocrTarget = cropCanvasToDataURL(rect, 2.2);
+        const ocrCanvas = cropCanvas(rect, 2.2);
+        const ocrTarget = canvasToDataURL(ocrCanvas, 0.95);
+
         foundText = await ocrBarcodeAutoRotate(ocrTarget);
       }
 
