@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>OCR Test (Tesseract.js v5 local)</title>
+  <title>OCR Test (Tesseract.js v5 UMD)</title>
   <style>
     body { font-family: -apple-system, system-ui, sans-serif; padding: 16px; }
     pre { white-space: pre-wrap; background: #f6f6f6; padding: 12px; border-radius: 10px; }
@@ -14,11 +14,10 @@
   <input type="file" id="file" accept="image/*" />
   <pre id="out">頁面已載入\n</pre>
 
-  <!-- ✅ 用 local 靜態檔，不用 CDN，不用 module -->
+  <!-- ✅ 用你本地的 UMD -->
   <script src="/tesseract/tesseract.min.js"></script>
 
   <script>
-    // ✅ 保證 DOM 都好了才跑（避免 out=null）
     window.addEventListener("DOMContentLoaded", () => {
       const out = document.getElementById("out");
       const fileInput = document.getElementById("file");
@@ -30,13 +29,14 @@
       async function initWorker() {
         out.textContent += "初始化 worker...\n";
 
-        // ✅ v5 寫法：createWorker 會回傳可用 worker（不用 worker.load）
-        worker = await Tesseract.createWorker({
-          workerPath: "/tesseract/worker.min.js",
-          corePath: "/tesseract/tesseract-core.wasm",
-          langPath: "/tessdata",
+        // ✅ UMD v5：createWorker() 不吃你那包 options 物件
+        worker = Tesseract.createWorker({
+          logger: m => {
+            // out.textContent += JSON.stringify(m) + "\n"; // 需要看進度再開
+          }
         });
 
+        // ✅ 重點：用 setParameters 之前先 loadLanguage/initialize
         out.textContent += "載入語言...\n";
         await worker.loadLanguage("eng");
 
@@ -46,7 +46,7 @@
         out.textContent += "設定參數...\n";
         await worker.setParameters({
           tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-          tessedit_pageseg_mode: "7",
+          tessedit_pageseg_mode: "7"
         });
 
         out.textContent += "OCR worker ready ✅\n\n";
