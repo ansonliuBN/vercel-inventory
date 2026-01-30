@@ -104,6 +104,12 @@
     <label>型號 (GTIN/料號):</label>
     <input type="text" id="editGtin" placeholder="尚未偵測">
 
+    <label>原始辨識全文（ZXing + OCR）：</label>
+    <textarea id="rawAll"
+      style="width:100%; min-height:120px; padding:12px; border:1px solid #ccc; border-radius:8px; font-size:14px; box-sizing:border-box; margin-top:4px; white-space:pre-wrap;"
+      placeholder="尚未辨識到任何文字"></textarea>
+
+
     <label>批號 (Lot/SN/UUID):</label>
     <input type="text" id="editLot" placeholder="尚未偵測">
 
@@ -395,6 +401,12 @@
   async function analyzeFromWorkCanvas() {
     loader.style.display = "block";
 
+    const debugLines = [];
+    debugLines.push(`[ZXING_WASM] ${zxingText || "(empty)"}`);
+    debugLines.push(`[OCR_CROP_RAW] ${t1 || "(empty)"}`);
+    debugLines.push(`[OCR_CROP_ENH] ${t2 || "(empty)"}`);
+
+
     if (workCanvas.width < 50 || workCanvas.height < 50) {
       throw new Error(`影像載入失敗或尺寸過小：${workCanvas.width}x${workCanvas.height}`);
     }
@@ -444,7 +456,7 @@
     const enhancedUrl = canvasToDataURL(enhanced, 0.95);
     const t2 = await ocrBarcodeAutoRotate(enhancedUrl);
     data = extractGS1Data(t2);
-    return { data, source: "OCR_CROP_ENH", raw: t2 };
+    return { data, source: "OCR_CROP_ENH", raw: t2, debug_text: debugLines.join("\n\n") };
   }
 
   async function triggerAnalysisFromBase64(base64Img) {
@@ -455,6 +467,16 @@
 
     const result = await analyzeFromWorkCanvas();
     const data = result.data;
+
+    // ✅ 顯示「全部原始辨識內容」給你檢查
+    // result 會含：source / raw（最後那輪拿到的文字）
+    // 我們另外把 ZXing raw 跟 OCR raw 都收集起來（下面第3點會補 analyzeFromWorkCanvas 回傳）
+    document.getElementById('rawAll').value =
+      [
+        `=== SOURCE: ${result.source} ===`,
+        result.debug_text ? result.debug_text : "",
+      ].filter(Boolean).join("\n");
+
 
     document.getElementById('editGtin').value = data.gtin;
     document.getElementById('editLot').value =
