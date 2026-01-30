@@ -158,20 +158,33 @@
   async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
     document.getElementById('status').innerText = "⌛ 正在交叉辨識 條碼與文字...";
+
     try {
       const reader = new ZXing.BrowserMultiFormatReader();
       let foundText = "";
-      
-      // 旋轉辨識 (0, 90, 270 度)
-      for (let rot of [0, 90, 270]) {
-        if (rot !== 0) rotateCanvas(rot);
+
+      // ✅ 存原始影像
+      const srcCanvas = document.createElement('canvas');
+      srcCanvas.width = workCanvas.width;
+      srcCanvas.height = workCanvas.height;
+      srcCanvas.getContext('2d').drawImage(workCanvas, 0, 0);
+
+      // ✅ 建議把 180 也加進去（很多人拍照會倒過來）
+      for (let rot of [0, 90, 180, 270]) {
+        // 每次從原始重來
+        workCanvas.width = srcCanvas.width;
+        workCanvas.height = srcCanvas.height;
+        ctx.drawImage(srcCanvas, 0, 0);
+
+        if (rot !== 0) rotateCanvasFromSource(srcCanvas, rot);
+
         try {
           const res = await reader.decodeFromCanvas(workCanvas);
           if (res) { foundText = res.getText(); break; }
-        } catch(e) {}
+        } catch (e) {}
       }
 
-      // OCR Fallback
+      // OCR fallback
       if (!foundText) {
         document.getElementById('status').innerText = "🧭 條碼讀取困難，嘗試辨識文字...";
         const ocr = await Tesseract.recognize(imgData, 'eng');
@@ -182,26 +195,45 @@
       document.getElementById('editGtin').value = gs1.gtin;
       document.getElementById('editLot').value = gs1.lot || foundText.replace(/[^A-Za-z0-9]/g, '').substring(0,12);
       document.getElementById('editExp').value = gs1.exp;
-      
+
       loader.style.display = 'none';
       document.getElementById('reviewArea').style.display = 'block';
       document.getElementById('status').innerText = "辨識完成，請複核資料。";
-    } catch(err) {
+    } catch (err) {
       alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
 
-  function rotateCanvas(deg) {
+
+    function rotateCanvasFromSource(sourceCanvas, deg) {
+    const srcW = sourceCanvas.width;
+    const srcH = sourceCanvas.height;
+
     const tempCanvas = document.createElement('canvas');
     const tCtx = tempCanvas.getContext('2d');
-    tempCanvas.width = workCanvas.height; tempCanvas.height = workCanvas.width;
-    tCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
-    tCtx.rotate(deg * Math.PI / 180);
-    tCtx.drawImage(preview, -workCanvas.width/2, -workCanvas.height/2);
-    workCanvas.width = tempCanvas.width; workCanvas.height = tempCanvas.height;
+
+    const rad = deg * Math.PI / 180;
+
+    // 90/270 會交換寬高
+    if (deg % 180 !== 0) {
+      tempCanvas.width = srcH;
+      tempCanvas.height = srcW;
+    } else {
+      tempCanvas.width = srcW;
+      tempCanvas.height = srcH;
+    }
+
+    tCtx.translate(tempCanvas.width / 2, tempCanvas.height / 2);
+    tCtx.rotate(rad);
+    tCtx.drawImage(sourceCanvas, -srcW / 2, -srcH / 2);
+
+    // 寫回 workCanvas
+    workCanvas.width = tempCanvas.width;
+    workCanvas.height = tempCanvas.height;
     ctx.drawImage(tempCanvas, 0, 0);
   }
+
 
   function parseGS1(raw) {
     let s = raw.replace(/\s+/g, '').replace(/[Il|]/g, '1').replace(/O/g, '0');
