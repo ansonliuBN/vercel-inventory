@@ -2,10 +2,11 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>OCR Test</title>
+<title>OCR Test (Tesseract v5)</title>
 </head>
 <body>
 
+<h3>OCR Test</h3>
 <input type="file" id="file" accept="image/*">
 <pre id="out"></pre>
 
@@ -20,20 +21,31 @@ let worker = null;
 async function getWorker() {
   if (worker) return worker;
 
-  out.textContent = "初始化 OCR worker...\n";
+  out.textContent += "建立 worker...\n";
 
-  worker = await createWorker("eng", 1, {
+  worker = await createWorker({
     workerPath: "/tesseract/worker.min.js",
     corePath: "/tesseract/tesseract-core.wasm",
-    langPath: "/tessdata"
+    langPath: "/tessdata",
+    logger: m => {
+      // 可開啟觀察進度
+      // console.log(m);
+    }
   });
 
+  out.textContent += "載入語言...\n";
+  await worker.loadLanguage("eng");
+
+  out.textContent += "初始化引擎...\n";
+  await worker.initialize("eng");
+
+  out.textContent += "設定 OCR 參數...\n";
   await worker.setParameters({
     tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-    tessedit_pageseg_mode: "7"
+    tessedit_pageseg_mode: "7" // SINGLE_LINE
   });
 
-  out.textContent += "OCR worker ready ✅\n";
+  out.textContent += "OCR worker ready ✅\n\n";
   return worker;
 }
 
@@ -41,12 +53,18 @@ fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
 
-  const w = await getWorker();
-  out.textContent += "開始 OCR...\n";
+  try {
+    const w = await getWorker();
 
-  const res = await w.recognize(file);
-  out.textContent += "\n--- OCR RESULT ---\n";
-  out.textContent += res.data.text;
+    out.textContent += "開始 OCR...\n";
+    const res = await w.recognize(file);
+
+    out.textContent += "\n--- OCR RESULT ---\n";
+    out.textContent += res.data.text || "(no text)\n";
+
+  } catch (err) {
+    out.textContent += "\n❌ ERROR:\n" + err.message;
+  }
 });
 </script>
 
