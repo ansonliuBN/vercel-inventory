@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>智能辨識入庫 - ZXing-wasm優先 + Tesseract v7 OCR fallback（GS1-128/UDI）</title>
 
 <!-- ✅ 避免瀏覽器硬抓 /favicon.ico 造成 404 -->
@@ -10,7 +10,7 @@
 
 <style>
   body { font-family:-apple-system, sans-serif; padding:15px; background:#f4f4f9; text-align:center; margin:0; }
-  .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 520px; margin: auto; }
+  .card { background:white; padding:15px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,0.1); max-width: 560px; margin: auto; }
 
   .btn-group { display: flex; gap: 10px; margin-top: 15px; }
   button { flex: 1; padding: 15px; border-radius: 10px; border: none; cursor: pointer; font-size: 16px; font-weight: bold; color: white; transition: 0.3s; }
@@ -20,7 +20,7 @@
   .btn-import { background: #27ae60; width: 100%; margin-top: 15px; font-size: 20px; box-shadow: 0 4px 10px rgba(39,174,96,0.3); }
   .btn-back { background: #666; width: auto; font-size: 14px; float: left; padding: 8px 15px; }
 
-  /* ✅ 相機預設直向長條 (9:16)，使用者知道方向 */
+  /* ✅ 相機預設直向長條 (9:16) */
   .camera-wrap {
     position: relative;
     width: 100%;
@@ -38,14 +38,14 @@
 
   .overlay { position:absolute; inset:0; pointer-events:none; }
 
-  /* ✅ 橫向細條框：提示「條碼請橫放」 */
+  /* ✅ 單一掃描框（橫向長條） */
   .scan-box {
     position:absolute;
     left:50%;
     top:52%;
     transform:translate(-50%,-50%);
     width:92%;
-    height:18%;
+    height:32%; /* ✅ 方案一：讓框高度夠容納「條碼 + 下面文字」 */
     border:1px solid rgba(255,255,255,0.28);
     border-radius:12px;
     box-shadow:0 0 0 9999px rgba(0,0,0,0.55);
@@ -64,19 +64,15 @@
   .review-form label { font-size: 13px; color: #555; font-weight: bold; display: block; margin-top: 10px; }
   .review-form input, .review-form select, .review-form textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 4px; }
 
-  .pill {
-    display:inline-block; padding:6px 10px; border-radius:999px;
-    background:#eef; color:#334; font-size:12px; font-weight:700;
-    margin-top:10px;
-  }
-
   .loader { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
   canvas#workCanvas { display:none; }
+
+  .pill { display:inline-block; padding:6px 10px; border-radius:999px; font-size:12px; background:#eef; color:#333; margin-top:10px; }
 </style>
 </head>
-
 <body>
+
 <div class="card">
   <button class="btn-back" onclick="location.href='index.html'">⬅️ 返回總表</button>
   <div style="clear: both;"></div>
@@ -103,16 +99,13 @@
   <button id="btnSnap" class="btn-snap" onclick="takeSnapshot()" style="display:none;">📸 點擊拍照並分析</button>
 
   <div class="loader" id="loader"></div>
+  <div id="sourcePill" class="pill" style="display:none;"></div>
 
   <div id="reviewArea" class="review-form">
     <h3 style="margin:0; color:#7360f2; border-bottom:1px solid #ddd; padding-bottom:8px;">🔍 辨識結果確認</h3>
 
-    <div class="pill" id="sourcePill">SOURCE: -</div>
-
     <label>原始辨識全文（ZXing + OCR）：</label>
-    <textarea id="rawAll"
-      style="min-height:180px; font-size:13px; white-space:pre-wrap;"
-      placeholder="尚未辨識到任何文字"></textarea>
+    <textarea id="rawAll" style="min-height:160px; white-space:pre-wrap;" placeholder="尚未辨識到任何文字"></textarea>
 
     <label>批號 (Lot/SN/UUID):</label>
     <input type="text" id="editLot" placeholder="尚未偵測">
@@ -128,14 +121,14 @@
     </select>
 
     <button class="btn-import" onclick="finalSubmit()">✅ 確認資料，匯入庫存</button>
-    <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px; border:none; border-radius:10px; padding:12px; cursor:pointer;">🔄 重拍一張</button>
+    <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px;">🔄 重拍一張</button>
   </div>
 
   <div id="status" style="margin-top:10px; font-size:13px; color:#888;"></div>
   <canvas id="workCanvas"></canvas>
 </div>
 
-<!-- ✅ ZXing-wasm (IIFE) Reader -->
+<!-- ✅ ZXing-wasm (IIFE) -->
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.1/dist/iife/reader/index.js"></script>
 
 <!-- ✅ Tesseract.js v7（OCR fallback） -->
@@ -149,8 +142,16 @@
   const ctx = workCanvas.getContext('2d');
   let stream = null;
 
+  // ============================
+  // Helpers
+  // ============================
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
-  function setSourcePill(s) { document.getElementById('sourcePill').innerText = `SOURCE: ${s || "-"}`; }
+
+  function showSourcePill(source, extra="") {
+    const pill = document.getElementById('sourcePill');
+    pill.style.display = 'inline-block';
+    pill.textContent = `SOURCE: ${source}` + (extra ? ` | ${extra}` : "");
+  }
 
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -168,11 +169,10 @@
       .replace(/O/g, '0');
   }
 
-  // ✅ 成功判斷：不依賴括號，只要抓到 01+14碼 & 17+6碼 就算有核心資料
   function hasGS1Core(text) {
     const s = normalizeText(text);
-    const has01 = /01(\d{14})/.test(s) || /\(01\)(\d{14})/.test(s);
-    const has17 = /17(\d{6})/.test(s)  || /\(17\)(\d{6})/.test(s);
+    const has01 = /(?:\(?01\)?)(\d{14})/.test(s) || /01(\d{14})/.test(s);
+    const has17 = /(?:\(?17\)?)(\d{6})/.test(s)  || /17(\d{6})/.test(s);
     return has01 && has17;
   }
 
@@ -207,15 +207,17 @@
   }
 
   // ============================
-  // Crop：大框 + 放大 2.6
+  // Crop: 單框，但內部分層（方案一）
+  // - 同一個 scan box
+  //   - 上 60%：條碼（ZXing）
+  //   - 下 40%：文字（OCR）
   // ============================
   function getScanBoxRect() {
     const cw = workCanvas.width;
     const ch = workCanvas.height;
 
     const boxW = cw * 0.92;
-    const boxH = ch * 0.22;
-
+    const boxH = ch * 0.35;  // ✅ 大框（你指定的 0.35）
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
     const y = Math.max(0, Math.floor((ch - boxH) / 2));
 
@@ -237,10 +239,34 @@
     return c;
   }
 
+  function splitCropLayered(scanCropCanvas) {
+    const W = scanCropCanvas.width;
+    const H = scanCropCanvas.height;
+
+    // 上 60%：條碼
+    const barcodeH = Math.floor(H * 0.60);
+    // 下 40%：文字
+    const textY = barcodeH;
+    const textH = Math.max(1, H - textY);
+
+    const c1 = document.createElement('canvas');
+    c1.width = W; c1.height = barcodeH;
+    c1.getContext('2d').drawImage(scanCropCanvas, 0, 0, W, barcodeH, 0, 0, W, barcodeH);
+
+    const c2 = document.createElement('canvas');
+    c2.width = W; c2.height = textH;
+    c2.getContext('2d').drawImage(scanCropCanvas, 0, textY, W, textH, 0, 0, W, textH);
+
+    return { barcodeCanvas: c1, textCanvas: c2 };
+  }
+
   function canvasToDataURL(canvas, quality = 0.95) {
     return canvas.toDataURL("image/jpeg", quality);
   }
 
+  // ============================
+  // OCR enhance (for text layer only)
+  // ============================
   function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
     const c = document.createElement("canvas");
     c.width = baseCanvas.width;
@@ -263,8 +289,20 @@
     return c;
   }
 
-  function tooSmallForOCR(w, h) {
-    return (w < 60 || h < 24);
+  function rotateCanvas(srcCanvas, deg) {
+    const rad = deg * Math.PI / 180;
+    const w = srcCanvas.width, h = srcCanvas.height;
+
+    const c = document.createElement('canvas');
+    const cctx = c.getContext('2d');
+
+    if (deg % 180 !== 0) { c.width = h; c.height = w; }
+    else { c.width = w; c.height = h; }
+
+    cctx.translate(c.width / 2, c.height / 2);
+    cctx.rotate(rad);
+    cctx.drawImage(srcCanvas, -w / 2, -h / 2);
+    return c;
   }
 
   // ============================
@@ -276,41 +314,28 @@
     }
   }
 
-  let zxingPrepared = false;
-  let zxingWasmUrl = "/zxing_reader.wasm"; // default self-host
-
-  async function detectWasmUrl() {
-    // 先試 self-host，失敗再用 CDN
-    const cdn = "https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.1/dist/reader/zxing_reader.wasm";
-    try {
-      const r = await fetch("/zxing_reader.wasm", { method: "HEAD", cache: "no-store" });
-      if (r.ok) return "/zxing_reader.wasm";
-    } catch (_) {}
-    return cdn;
-  }
-
   async function prepareZXingReaderModuleOnce() {
     ensureZXingWasmLoaded();
-    if (zxingPrepared) return;
+    if (prepareZXingReaderModuleOnce._done) return;
+    prepareZXingReaderModuleOnce._done = true;
 
-    zxingWasmUrl = await detectWasmUrl();
-
-    window.ZXingWASM.prepareZXingModule({
+    const ZX = window.ZXingWASM;
+    ZX.prepareZXingModule({
       overrides: {
         locateFile: (path, prefix) => {
           if (!path.endsWith(".wasm")) return prefix + path;
-          return zxingWasmUrl;
+          // ✅ 你自己 host 的 wasm（public/zxing_reader.wasm）
+          return "/zxing_reader.wasm";
         }
       },
       fireImmediately: true
     });
-
-    zxingPrepared = true;
   }
 
-  async function decodeBarcodeWithZXing(cropRawCanvas) {
+  async function decodeBarcodeWithZXing(canvasForZXing) {
     await prepareZXingReaderModuleOnce();
-    const imgData = cropRawCanvas.getContext("2d").getImageData(0, 0, cropRawCanvas.width, cropRawCanvas.height);
+
+    const imgData = canvasForZXing.getContext("2d").getImageData(0, 0, canvasForZXing.width, canvasForZXing.height);
 
     const results = await window.ZXingWASM.readBarcodes(imgData, {
       tryHarder: true,
@@ -321,8 +346,33 @@
     return results[0].text || "";
   }
 
+  // ✅ ZXing 也做「0先試；失敗才旋轉」：更耐你那三種拍法
+  async function zxingAutoRotate(barcodeCanvas, debug) {
+    const angles = [0, 90, 270, 180];
+
+    for (const deg of angles) {
+      const c = (deg === 0) ? barcodeCanvas : rotateCanvas(barcodeCanvas, deg);
+
+      let text = "";
+      try {
+        text = await decodeBarcodeWithZXing(c);
+      } catch (e) {
+        text = "";
+      }
+
+      debug.push(`[ZXING_WASM][${deg}] ${text ? text : "(empty)"}`);
+
+      if (text && hasGS1Core(text)) {
+        debug.push(`[ZXING_WASM][BEST_DEG] ${deg}`);
+        return { text, bestDeg: deg };
+      }
+    }
+    debug.push(`[ZXING_WASM][BEST_DEG] -`);
+    return { text: "", bestDeg: null };
+  }
+
   // ============================
-  // Tesseract v7 worker
+  // Tesseract v7 worker (OCR fallback)
   // ============================
   async function ensureTesseractLoaded() {
     if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
@@ -340,29 +390,12 @@
     return ocrWorker;
   }
 
-  function rotateDataUrl(dataUrl, deg) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const rad = deg * Math.PI / 180;
-        const c = document.createElement('canvas');
-        const cctx = c.getContext('2d');
-
-        const w = img.width, h = img.height;
-        if (deg % 180 !== 0) { c.width = h; c.height = w; }
-        else { c.width = w; c.height = h; }
-
-        cctx.translate(c.width / 2, c.height / 2);
-        cctx.rotate(rad);
-        cctx.drawImage(img, -w / 2, -h / 2);
-
-        resolve(c.toDataURL('image/jpeg', 0.95));
-      };
-      img.src = dataUrl;
-    });
+  function tooSmallForOCR(w, h) {
+    // 太小就不要跑（避免你那個 1x36 的 wasm error）
+    return (w < 80 || h < 28);
   }
 
-  async function ocrBarcodeAutoRotateVerbose(dataUrl, tagForDebug) {
+  async function ocrAutoRotate(dataUrl, debugPrefix, debug) {
     const angles = [0, 90, 180, 270];
     const worker = await getOcrWorker();
 
@@ -371,105 +404,140 @@
       tessedit_pageseg_mode: "7"
     };
 
-    const attempts = [];
+    let best = { deg: null, text: "" };
+
     for (const deg of angles) {
-      setStatus(`🧨 OCR 旋轉強攻：${tagForDebug} ${deg}°...`);
-      const targetUrl = (deg === 0) ? dataUrl : await rotateDataUrl(dataUrl, deg);
+      setStatus(`🧾 OCR fallback（${debugPrefix}）旋轉：${deg}°...`);
+      const url = (deg === 0) ? dataUrl : canvasToDataURL(rotateCanvas(await dataUrlToCanvas(dataUrl), deg), 0.95);
 
-      const ret = await worker.recognize(targetUrl, options);
-      const text = normalizeText((ret && ret.data && ret.data.text) ? ret.data.text : "");
-      attempts.push({ deg, text });
+      let retText = "";
+      try {
+        const ret = await worker.recognize(url, options);
+        retText = normalizeText((ret && ret.data && ret.data.text) ? ret.data.text : "");
+      } catch (e) {
+        retText = "";
+      }
 
-      if (hasGS1Core(text)) {
-        return { bestText: text, attempts, bestDeg: deg };
+      debug.push(`[${debugPrefix}][${deg}] ${retText ? retText : "(empty)"}`);
+
+      if (retText && hasGS1Core(retText)) {
+        best = { deg, text: retText };
+        break;
+      }
+      // 次佳：至少有看到 01 或 17
+      if (!best.text && retText && (retText.includes("01") || retText.includes("17"))) {
+        best = { deg, text: retText };
       }
     }
-    return { bestText: attempts.length ? attempts[attempts.length - 1].text : "", attempts, bestDeg: null };
+
+    debug.push(`[${debugPrefix}][BEST_DEG] ${best.deg === null ? "-" : best.deg}`);
+    return best;
+  }
+
+  function dataUrlToCanvas(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.width; c.height = img.height;
+        c.getContext('2d').drawImage(img, 0, 0);
+        resolve(c);
+      };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
   }
 
   // ============================
-  // FLOW A: 先 ZXing-wasm，再 OCR fallback（raw→enh）
+  // Main analysis (方案一)
   // ============================
   async function analyzeFromWorkCanvas() {
     loader.style.display = "block";
+    const debug = [];
+
+    // 路徑提示（方便你確認 wasm 來源）
+    debug.push(`WASM_URL: /zxing_reader.wasm`);
 
     if (workCanvas.width < 50 || workCanvas.height < 50) {
       throw new Error(`影像載入失敗或尺寸過小：${workCanvas.width}x${workCanvas.height}`);
     }
 
-    const debugLines = [];
-    debugLines.push(`WASM_URL: ${zxingWasmUrl || "(not set yet)"}`);
-
+    // 1) 大框 crop（0.35）+ 放大 2.6
     const rect = getScanBoxRect();
-    const cropRaw = cropCanvas(rect, 2.6);
+    const scanCrop = cropCanvas(rect, 2.6);
 
-    // 1) ZXing-wasm（不旋轉）
-    setStatus("📡 先嘗試解碼條碼（zxing-wasm，不旋轉）...");
-    let zxingText = "";
-    try {
-      zxingText = await decodeBarcodeWithZXing(cropRaw);
-    } catch (e) {
-      zxingText = "";
-      debugLines.push(`[ZXING_WASM][ERROR] ${e && e.message ? e.message : String(e)}`);
-    }
-    debugLines.push(`[ZXING_WASM][RAW] ${zxingText || "(empty)"}`);
+    // 2) 內部分層：上 60% 給 ZXing；下 40% 給 OCR
+    const { barcodeCanvas, textCanvas } = splitCropLayered(scanCrop);
 
-    let data = extractGS1Data(zxingText);
-    debugLines.push(`[ZXING_WASM][PARSE] gtin=${data.gtin || "-"} exp=${data.exp || "-"} lot=${data.lot || "-"}`);
+    // 3) ZXing 主力：成功就停（你指定）
+    setStatus("📡 ZXing 解碼條碼（上 60% 區域）...");
+    const zxing = await zxingAutoRotate(barcodeCanvas, debug);
+    const zxingText = zxing.text || "";
+    const zxingData = extractGS1Data(zxingText);
+    debug.push(`[ZXING_WASM][PARSE] gtin=${zxingData.gtin || "-"} exp=${zxingData.exp || "-"} lot=${zxingData.lot || "-"}`);
 
-    if (data.gtin && data.exp) {
+    if (zxingText) {
+      // ✅ 只要 ZXing 有結果，就停（照你要求）
       return {
-        data,
         source: "ZXING_WASM",
         raw: zxingText,
-        debug_text: debugLines.join("\n")
+        data: zxingData,
+        debug_text: debug.join("\n")
       };
     }
 
-    // 2) OCR fallback：raw crop 先跑，再跑二值化
-    setStatus("⚠️ 條碼解碼未取得完整 01/17，改用 OCR fallback...");
-    if (tooSmallForOCR(cropRaw.width, cropRaw.height)) {
-      setStatus("⚠️ 切圖太小，改用整張圖 OCR fallback...");
-      const fullUrl = workCanvas.toDataURL("image/jpeg", 0.92);
-      const o = await ocrBarcodeAutoRotateVerbose(fullUrl, "FULL");
-      debugLines.push(`[OCR_FULL][BEST_DEG] ${o.bestDeg === null ? "-" : o.bestDeg}`);
-      for (const a of o.attempts) debugLines.push(`[OCR_FULL][${a.deg}] ${a.text || "(empty)"}`);
-
-      data = extractGS1Data(o.bestText);
-      debugLines.push(`[OCR_FULL][PARSE] gtin=${data.gtin || "-"} exp=${data.exp || "-"} lot=${data.lot || "-"}`);
-
-      return { data, source: "OCR_FULL", raw: o.bestText, debug_text: debugLines.join("\n") };
+    // 4) OCR fallback：只吃「下 40% 文字區」
+    setStatus("⚠️ ZXing 未解到條碼，改用 OCR fallback（下 40% 文字區）...");
+    if (tooSmallForOCR(textCanvas.width, textCanvas.height)) {
+      debug.push(`[OCR_TEXT][SKIP] too small ${textCanvas.width}x${textCanvas.height}`);
+      return {
+        source: "OCR_TEXT_SKIP_TOO_SMALL",
+        raw: "",
+        data: { gtin:"", exp:"", lot:"" },
+        debug_text: debug.join("\n")
+      };
     }
 
-    // 2-1) raw crop OCR
-    const rawUrl = canvasToDataURL(cropRaw, 0.95);
-    const o1 = await ocrBarcodeAutoRotateVerbose(rawUrl, "CROP_RAW");
-    debugLines.push(`[OCR_CROP_RAW][BEST_DEG] ${o1.bestDeg === null ? "-" : o1.bestDeg}`);
-    for (const a of o1.attempts) debugLines.push(`[OCR_CROP_RAW][${a.deg}] ${a.text || "(empty)"}`);
+    // 4-1) OCR on raw text crop
+    const rawTextUrl = canvasToDataURL(textCanvas, 0.95);
+    const o1 = await ocrAutoRotate(rawTextUrl, "OCR_TEXT_RAW", debug);
+    let bestText = o1.text || "";
+    let bestData = extractGS1Data(bestText);
+    debug.push(`[OCR_TEXT_RAW][PARSE] gtin=${bestData.gtin || "-"} exp=${bestData.exp || "-"} lot=${bestData.lot || "-"}`);
 
-    data = extractGS1Data(o1.bestText);
-    debugLines.push(`[OCR_CROP_RAW][PARSE] gtin=${data.gtin || "-"} exp=${data.exp || "-"} lot=${data.lot || "-"}`);
-
-    if (data.gtin && data.exp) {
-      return { data, source: "OCR_CROP_RAW", raw: o1.bestText, debug_text: debugLines.join("\n") };
+    if (bestText && (bestData.exp || bestData.lot || bestData.gtin)) {
+      return {
+        source: "OCR_TEXT_RAW",
+        raw: bestText,
+        data: bestData,
+        debug_text: debug.join("\n")
+      };
     }
 
-    // 2-2) enhanced crop OCR
-    const enhanced = enhanceForOcr(cropRaw, 1.6, 170);
-    if (tooSmallForOCR(enhanced.width, enhanced.height)) {
-      // enhanced 太小就不要跑，直接回 raw 的結果
-      return { data, source: "OCR_CROP_RAW", raw: o1.bestText, debug_text: debugLines.join("\n") };
+    // 4-2) OCR on enhanced text crop
+    const enhancedText = enhanceForOcr(textCanvas, 1.6, 170);
+    if (tooSmallForOCR(enhancedText.width, enhancedText.height)) {
+      debug.push(`[OCR_TEXT_ENH][SKIP] too small ${enhancedText.width}x${enhancedText.height}`);
+      return {
+        source: "OCR_TEXT_RAW",
+        raw: bestText,
+        data: bestData,
+        debug_text: debug.join("\n")
+      };
     }
 
-    const enhUrl = canvasToDataURL(enhanced, 0.95);
-    const o2 = await ocrBarcodeAutoRotateVerbose(enhUrl, "CROP_ENH");
-    debugLines.push(`[OCR_CROP_ENH][BEST_DEG] ${o2.bestDeg === null ? "-" : o2.bestDeg}`);
-    for (const a of o2.attempts) debugLines.push(`[OCR_CROP_ENH][${a.deg}] ${a.text || "(empty)"}`);
+    const enhUrl = canvasToDataURL(enhancedText, 0.95);
+    const o2 = await ocrAutoRotate(enhUrl, "OCR_TEXT_ENH", debug);
+    bestText = o2.text || "";
+    bestData = extractGS1Data(bestText);
+    debug.push(`[OCR_TEXT_ENH][PARSE] gtin=${bestData.gtin || "-"} exp=${bestData.exp || "-"} lot=${bestData.lot || "-"}`);
 
-    data = extractGS1Data(o2.bestText);
-    debugLines.push(`[OCR_CROP_ENH][PARSE] gtin=${data.gtin || "-"} exp=${data.exp || "-"} lot=${data.lot || "-"}`);
-
-    return { data, source: "OCR_CROP_ENH", raw: o2.bestText, debug_text: debugLines.join("\n") };
+    return {
+      source: "OCR_TEXT_ENH",
+      raw: bestText,
+      data: bestData,
+      debug_text: debug.join("\n")
+    };
   }
 
   async function triggerAnalysisFromBase64(base64Img) {
@@ -479,52 +547,32 @@
     await drawBase64ToWorkCanvas(base64Img);
 
     const result = await analyzeFromWorkCanvas();
-    const data = result.data;
+    const data = result.data || { gtin:"", exp:"", lot:"" };
 
-    setSourcePill(result.source);
-
-    // ✅ 顯示「完整 debug」：ZXing raw、每個 OCR 角度結果、parse 結果
+    // debug 顯示
     document.getElementById('rawAll').value =
       [
         `=== SOURCE: ${result.source} ===`,
-        result.debug_text || "(no debug)",
-      ].join("\n");
+        result.debug_text || "",
+      ].filter(Boolean).join("\n");
 
-    // ✅ 你後台不再需要 product_code，所以不再顯示 GTIN 欄位
-    // 這裡只填你要送的兩個欄位：lot + exp（仍可人工修改）
+    showSourcePill(result.source);
+
+    // ✅ 型號(GTIN) UI 已移除；但仍可從 rawAll 看到 GTIN/完整內容
     document.getElementById('editLot').value =
-      data.lot || normalizeText(result.raw).replace(/[^A-Za-z0-9]/g, '').substring(0,12);
+      data.lot || normalizeText(result.raw).replace(/[^A-Za-z0-9]/g, '').substring(0, 24);
 
-    document.getElementById('editExp').value = data.exp;
+    document.getElementById('editExp').value = data.exp || "";
 
     loader.style.display = 'none';
     document.getElementById('reviewArea').style.display = 'block';
 
     setStatus(
-      (data.exp)
+      (data.exp && document.getElementById('editLot').value)
         ? `辨識完成（來源：${result.source}），請複核資料。`
-        : `⚠️ 未抓到有效日期(17)，建議重拍或人工修正。（來源：${result.source}）`
+        : `⚠️ 未抓到完整資訊，建議重拍或人工修正。（來源：${result.source}）`
     );
   }
-
-  // ✅ for <input type="file" onchange="handleFileUpload(event)">
-  async function handleFileUpload(e) {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-
-    const base64 = await fileToBase64(file);
-
-    preview.src = base64;
-    prepareUIForAnalysis();
-
-    try {
-      await triggerAnalysisFromBase64(base64);
-    } catch (err) {
-      alert("辨識發生錯誤: " + (err && err.message ? err.message : String(err)));
-      location.reload();
-    }
-  }
-
 
   // ============================
   // Camera / UI
@@ -540,7 +588,7 @@
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
 
-      setStatus("請把條碼『橫放』在中間細長框內（避免反光、靠近一點）。");
+      setStatus("請把「條碼 + 下方那行字」一起放進框內（避免反光、靠近一點）。");
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
     }
@@ -558,7 +606,7 @@
     try {
       await triggerAnalysisFromBase64(base64);
     } catch (err) {
-      alert("辨識發生錯誤: " + (err && err.message ? err.message : String(err)));
+      alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
@@ -581,7 +629,7 @@
     try {
       await triggerAnalysisFromBase64(base64);
     } catch (err) {
-      alert("辨識發生錯誤: " + (err && err.message ? err.message : String(err)));
+      alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
@@ -593,13 +641,15 @@
     document.getElementById('modeSelect').style.display = 'none';
     document.getElementById('btnSnap').style.display = 'none';
     document.getElementById('guidelines').style.display = 'none';
+    document.getElementById('sourcePill').style.display = 'none';
   }
 
   // ============================
-  // Submit ✅ 依你要求：後台不再傳 product_code
+  // Submit ✅ 後台 payload：移除 product_code（你說不用傳）
   // ============================
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
+
     const payload = {
       item_uuid: document.getElementById('editLot').value,
       expiry_date: document.getElementById('editExp').value,
