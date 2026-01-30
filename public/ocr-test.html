@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>OCR Test</title>
+</head>
+<body>
+
+<input type="file" id="file" accept="image/*">
+<pre id="out"></pre>
+
+<script type="module">
+import { createWorker } from "/tesseract/tesseract.esm.min.js";
+
+const out = document.getElementById("out");
+const fileInput = document.getElementById("file");
+
+let worker = null;
+
+async function getWorker() {
+  if (worker) return worker;
+
+  out.textContent = "初始化 OCR worker...\n";
+
+  worker = await createWorker("eng", 1, {
+    workerPath: "/tesseract/worker.min.js",
+    corePath: "/tesseract/tesseract-core.wasm.js",
+    langPath: "/tessdata"
+  });
+
+  await worker.setParameters({
+    tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+    tessedit_pageseg_mode: "7"
+  });
+
+  out.textContent += "OCR worker ready ✅\n";
+  return worker;
+}
+
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const w = await getWorker();
+  out.textContent += "開始 OCR...\n";
+
+  const res = await w.recognize(file);
+  out.textContent += "\n--- OCR RESULT ---\n";
+  out.textContent += res.data.text;
+});
+</script>
+
+</body>
+</html>
