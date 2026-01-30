@@ -24,7 +24,7 @@ async function getWorker() {
 
   worker = await createWorker("eng", 1, {
     workerPath: "/tesseract/worker.min.js",
-    corePath: "/tesseract/tesseract-core.wasm.js",
+    corePath: "/tesseract/tesseract-core.wasm",
     langPath: "/tessdata"
   });
 
