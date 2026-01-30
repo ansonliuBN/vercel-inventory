@@ -167,23 +167,46 @@
 
   async function saveToDB(gs1) {
     loader.style.display = 'block';
-    const res = await fetch('/api/stock', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        item_uuid: gs1.key,
-        product_code: gs1.gtin,
-        expiry_date: gs1.exp,
-        from_loc: 'FACTORY',
-        to_loc: 'MAIN',
-        operator: 'SNAP_MODE'
-      })
-    });
-    if (res.ok) {
-      alert("✅ 入庫成功！");
-      location.href = 'index.html';
-    } else {
-      alert("❌ 存入失敗");
+    statusEl.innerHTML = "🚀 正在存入資料庫...";
+    
+    try {
+      const res = await fetch('/api/stock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          item_uuid: gs1.key,
+          product_code: gs1.gtin,
+          expiry_date: gs1.exp,
+          from_loc: 'FACTORY',
+          to_loc: 'MAIN',
+          operator: 'SNAP_MODE'
+        })
+      });
+
+      const result = await res.json();
+
+      if (res.ok) {
+        alert("✅ 入庫成功！");
+        location.href = 'index.html';
+      } else {
+        // --- 報錯診斷邏輯 ---
+        console.error("Database Error:", result);
+        
+        // 抓出具體的錯誤原因 (Supabase 通常放在 message)
+        let errorMsg = result.message || result.error_description || JSON.stringify(result);
+        
+        statusEl.innerHTML = `
+          <div style="color:red; background:#fff5f5; padding:15px; border:2px solid #ff0000; border-radius:12px; text-align:left; margin-top:10px;">
+            <b style="font-size:18px;">❌ 存入失敗</b><br>
+            <p>原因：<span style="background:#eee; padding:2px 5px;">${errorMsg}</span></p>
+            <hr>
+            <small>提示：如果是 "column does not exist"，代表 Supabase 資料表欄位名稱打錯了。請檢查是否有 <b>operator_name</b> 這個欄位。</small>
+          </div>
+        `;
+        loader.style.display = 'none';
+      }
+    } catch (e) {
+      statusEl.innerHTML = `<b style="color:red">❌ 網路連線出錯</b><br>${e.message}`;
       loader.style.display = 'none';
     }
   }
