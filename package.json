@@ -8,6 +8,6 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.0.0",
     "@zxing/browser": "^0.1.5",
-    "tesseract.js": "^5.0.5"
+    "tesseract.js": "^7.0.0"
   }
 }

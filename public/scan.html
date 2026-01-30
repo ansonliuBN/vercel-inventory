@@ -96,8 +96,8 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<!-- ✅ 只保留一個 CDN，避免重複載入造成不確定行為 -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.5.2/dist/tesseract.min.js"></script>
+<!-- ✅ v7：只保留一個 CDN，避免重複載入造成不確定行為 -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"></script>
 
 <script>
   const video = document.getElementById('video');
@@ -108,14 +108,55 @@
   let stream = null;
 
   // ============================
-  // 0) 確保 Tesseract 已載入（避免 Tesseract is not defined）
+  // v7：Worker Singleton（只建立一次，避免每次 OCR 重建）
   // ============================
-  async function ensureTesseractLoaded() {
-    if (window.Tesseract) return;
+  const TESSERACT_V7_DIST = "https://cdn.jsdelivr.net/npm/tesseract.js@7/dist";
+  const TESSERACT_CORE_V7 = "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0"; // 若你要鎖版，可維持 7.0.0
+  let ocrWorker = null;
+  let workerReady = false;
 
-    // 如果這裡還拿不到，代表 CDN 被擋/網路問題
-    throw new Error("Tesseract.js 未載入成功：請檢查 Network 是否有 tesseract.min.js 被擋或 404");
+  async function ensureTesseractLoaded() {
+    if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
+      throw new Error("Tesseract.js v7 未載入成功：請檢查 Network 是否有 tesseract.min.js 被擋或 404");
+    }
   }
+
+  async function getOcrWorker() {
+    await ensureTesseractLoaded();
+    if (ocrWorker && workerReady) return ocrWorker;
+
+    document.getElementById('status').innerText = "🧠 初始化 OCR 引擎 (v7 worker)...";
+
+    // v7：用 worker API（官方建議）
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
+      // ✅ 明確指定 worker/core 來源，避免跨網域找不到 worker 或 wasm
+      workerPath: `${TESSERACT_V7_DIST}/worker.min.js`,
+      corePath: TESSERACT_CORE_V7,
+
+      // 可選：如果你想看 OCR 進度，可打開下面這段（目前只在需要時更新 status）
+      logger: (m) => {
+        // m.status: "recognizing text" / "loading tesseract core" / ...
+        // m.progress: 0~1
+        if (m && typeof m.progress === "number" && m.status) {
+          // 不要太吵：只顯示辨識階段的進度
+          if (m.status.includes("recogniz")) {
+            const pct = Math.round(m.progress * 100);
+            document.getElementById('status').innerText = `🔎 OCR 辨識中... ${pct}%`;
+          }
+        }
+      }
+    });
+
+    workerReady = true;
+    return ocrWorker;
+  }
+
+  // 建議：離開頁面時釋放 worker（不影響你的流程，只是更乾淨）
+  window.addEventListener("beforeunload", async () => {
+    try {
+      if (ocrWorker) await ocrWorker.terminate();
+    } catch (_) {}
+  });
 
   // ============================
   // 1) 圖片前處理與 Base64 轉換
@@ -162,7 +203,6 @@
     const cw = workCanvas.width;
     const ch = workCanvas.height;
 
-    // 條碼通常偏扁：用較小高度會更穩（你要更大就把 0.22 改回 0.40）
     const boxW = cw * 0.90;
     const boxH = ch * 0.22;
 
@@ -236,22 +276,24 @@
   }
 
   // ============================
-  // OCR 暴力旋轉 + 關鍵字過濾
+  // v7：OCR 暴力旋轉 + 關鍵字過濾（用 worker.recognize）
   // ============================
   async function ocrBarcodeAutoRotate(inputDataUrl) {
     const angles = [0, 90, 180, 270];
+    const worker = await getOcrWorker();
 
-    const options = {
+    // ✅ 單次 job options（避免全域參數互相污染）
+    const jobOptions = {
       tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
-      tessedit_pageseg_mode: 7 // SINGLE_LINE
+      tessedit_pageseg_mode: "7" // SINGLE_LINE
     };
 
     for (const deg of angles) {
       document.getElementById('status').innerText = `🧨 OCR 旋轉強攻：${deg}°...`;
       const dataUrl = (deg === 0) ? inputDataUrl : await rotateDataUrl(inputDataUrl, deg);
 
-      const res = await Tesseract.recognize(dataUrl, 'eng', options);
-      const text = normalizeText(res.data.text || "");
+      const ret = await worker.recognize(dataUrl, jobOptions);
+      const text = normalizeText((ret && ret.data && ret.data.text) ? ret.data.text : "");
 
       if (text.includes("(01)") && text.includes("(17)")) {
         return text;
@@ -268,11 +310,6 @@
     document.getElementById('status').innerText = "⌛ 正在準備 OCR 強攻...";
 
     try {
-      await ensureTesseractLoaded();
-
-      // Debug: 你想看版本就打開這行
-      // console.log("Tesseract version:", Tesseract.version);
-
       await drawBase64ToWorkCanvas(base64Img);
 
       const rect = getScanBoxRect();
@@ -366,7 +403,7 @@
   }
 
   // ============================
-  // Submit (UNCHANGED)
+  // Submit (UNCHANGED) ✅ 後台 payload 完全不動
   // ============================
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
