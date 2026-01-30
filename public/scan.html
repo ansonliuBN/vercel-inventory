@@ -36,14 +36,14 @@
 
   .overlay { position:absolute; inset:0; pointer-events:none; }
 
-  /* ✅ 單一大框：要能同時裝「條碼 + 下方文字」 */
+  /* ✅ 使用者對準的「長條框」 */
   .scan-box {
     position:absolute;
     left:50%;
     top:52%;
     transform:translate(-50%,-50%);
     width:92%;
-    height:32%;
+    height:22%;
     border:1px solid rgba(255,255,255,0.28);
     border-radius:12px;
     box-shadow:0 0 0 9999px rgba(0,0,0,0.55);
@@ -120,10 +120,9 @@
     <label>原始辨識全文（ZXing + OCR）：</label>
     <textarea id="rawAll" style="min-height:180px; white-space:pre-wrap;" placeholder="尚未辨識到任何文字"></textarea>
 
-    <!-- ✅ 你要的：直接看系統切到什麼 -->
     <div class="debug-grid">
       <div class="debug-card">
-        <b>SCAN_CROP（大框切圖）</b>
+        <b>SCAN_CROP（長條框切圖）</b>
         <img id="imgScanCrop" alt="scan crop">
       </div>
       <div class="debug-card">
@@ -131,11 +130,11 @@
         <img id="imgZxingFeed" alt="zxing feed">
       </div>
       <div class="debug-card">
-        <b>OCR_TEXT_RAW（餵 OCR 的文字區）</b>
+        <b>OCR_FEED_RAW（OCR 餵入）</b>
         <img id="imgOcrRaw" alt="ocr raw">
       </div>
       <div class="debug-card">
-        <b>OCR_TEXT_ENH（二值化後）</b>
+        <b>OCR_FEED_ENH（二值化）</b>
         <img id="imgOcrEnh" alt="ocr enh">
       </div>
     </div>
@@ -173,10 +172,10 @@
   let stream = null;
 
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
-  function showSourcePill(source, extra="") {
+  function showSourcePill(source) {
     const pill = document.getElementById('sourcePill');
     pill.style.display = 'inline-block';
-    pill.textContent = `SOURCE: ${source}` + (extra ? ` | ${extra}` : "");
+    pill.textContent = `SOURCE: ${source}`;
   }
 
   function fileToBase64(file) {
@@ -229,11 +228,11 @@
     });
   }
 
-  // ✅ 大框（0.35）置中
+  // ✅ 以「長條框」為主：高度較扁（你指定偏向長條）
   function getScanBoxRect() {
     const cw = workCanvas.width, ch = workCanvas.height;
     const boxW = cw * 0.92;
-    const boxH = ch * 0.35;
+    const boxH = ch * 0.22;   // ✅ 偏長條
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
     const y = Math.max(0, Math.floor((ch - boxH) / 2));
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
@@ -243,17 +242,15 @@
     const c = document.createElement("canvas");
     c.width = Math.max(10, Math.floor(rect.w * scale));
     c.height = Math.max(10, Math.floor(rect.h * scale));
-    const cctx = c.getContext("2d");
-
-    // ✅ 避免放大時太糊：關掉 smoothing（對 1D 條碼通常更好）
-    cctx.imageSmoothingEnabled = false;
+    const g = c.getContext("2d");
+    g.imageSmoothingEnabled = false;
 
     const sx = Math.max(0, Math.min(workCanvas.width - 1, rect.x));
     const sy = Math.max(0, Math.min(workCanvas.height - 1, rect.y));
     const sw = Math.max(1, Math.min(workCanvas.width - sx, rect.w));
     const sh = Math.max(1, Math.min(workCanvas.height - sy, rect.h));
 
-    cctx.drawImage(workCanvas, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    g.drawImage(workCanvas, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return c;
   }
 
@@ -273,38 +270,44 @@
     const c = document.createElement('canvas');
     const g = c.getContext('2d');
     g.imageSmoothingEnabled = false;
-    if (deg % 180 !== 0) { c.width = h; c.height = w; }
-    else { c.width = w; c.height = h; }
+    if (deg % 180 !== 0) { c.width = h; c.height = w; } else { c.width = w; c.height = h; }
     g.translate(c.width/2, c.height/2);
     g.rotate(rad);
     g.drawImage(src, -w/2, -h/2);
     return c;
   }
 
-  function canvasToDataURL(c, q=0.95){ return c.toDataURL("image/jpeg", q); }
+  function canvasToDataURL(c, q=0.92){ return c.toDataURL("image/jpeg", q); }
 
-  // OCR enhance（只給文字區）
-  function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
-    const c = document.createElement("canvas");
-    c.width = baseCanvas.width;
-    c.height = baseCanvas.height;
-    const g = c.getContext("2d");
-    g.drawImage(baseCanvas, 0, 0);
-    const img = g.getImageData(0,0,c.width,c.height);
-    const d = img.data;
-    for (let i=0;i<d.length;i+=4){
-      const r=d[i], gg=d[i+1], b=d[i+2];
-      let y = 0.299*r + 0.587*gg + 0.114*b;
-      y = (y - 128) * contrast + 128;
-      y = Math.max(0, Math.min(255, y));
-      const v = (y > threshold) ? 255 : 0;
-      d[i]=d[i+1]=d[i+2]=v;
+  // ✅ 長條 ROI 掃描（重疊 + padding）
+  function buildLongBarCandidates(scanCrop) {
+    const W = scanCrop.width, H = scanCrop.height;
+
+    // ROI 形狀：偏長條（適合條碼）
+    const roiW = Math.floor(W * 0.92);
+    const roiH = Math.floor(H * 0.72);     // 長條框內，多吃一點高度，避免切到邊緣
+    const stepY = Math.max(1, Math.floor(H * 0.10)); // ✅ 垂直小步伐重疊
+
+    const left = Math.floor((W - roiW) / 2);
+
+    const list = [];
+    for (let y=0; y<=H - roiH; y+=stepY) {
+      list.push({ name:`BAR_Y${y}`, canvas: cropSub(scanCrop, left, y, roiW, roiH) });
     }
-    g.putImageData(img,0,0);
-    return c;
+
+    // ✅ padding 再加兩個：往上/下擴（避免剛好切到邊緣）
+    // 這裡做成“更高”的 ROI，讓 ZXing 更容易拿到 quiet zone
+    const padH = Math.min(H, Math.floor(roiH * 1.15));
+    const padY = Math.max(0, Math.floor((H - padH) / 2));
+    list.unshift({ name:`BAR_PAD_CENTER`, canvas: cropSub(scanCrop, left, padY, roiW, padH) });
+
+    // 保底：整張 scanCrop
+    list.unshift({ name:`FULL`, canvas: scanCrop });
+
+    return list;
   }
 
-  // ============ ZXing ============
+  // ===== ZXing =====
   function ensureZXingWasmLoaded() {
     if (!window.ZXingWASM || typeof window.ZXingWASM.readBarcodes !== "function") {
       throw new Error("zxing-wasm 未載入成功（index.js）");
@@ -331,48 +334,36 @@
     return results[0].text || "";
   }
 
-  // ✅ 核心：候選區 + 旋轉
-  async function zxingTryCandidates(scanCrop, debug) {
-    const W = scanCrop.width, H = scanCrop.height;
-
-    // 候選區：整塊、上60、下60、左60、右60
-    const cand = [
-      { name:"FULL", c: scanCrop },
-      { name:"TOP60", c: cropSub(scanCrop, 0, 0, W, H*0.60) },
-      { name:"BOT60", c: cropSub(scanCrop, 0, H*0.40, W, H*0.60) },
-      { name:"LEFT60", c: cropSub(scanCrop, 0, 0, W*0.60, H) },
-      { name:"RIGHT60", c: cropSub(scanCrop, W*0.40, 0, W*0.60, H) },
-    ];
-
+  async function zxingScanLongBar(scanCrop, debug) {
+    const candidates = buildLongBarCandidates(scanCrop);
     const angles = [0, 90, 270, 180];
-    let best = { text:"", candName:"", deg:null, feedCanvas: null };
 
-    for (const item of cand) {
+    for (const item of candidates) {
       for (const deg of angles) {
-        const feed = (deg===0) ? item.c : rotateCanvas(item.c, deg);
+        const feed = (deg===0) ? item.canvas : rotateCanvas(item.canvas, deg);
         let t = "";
         try { t = await decodeBarcodeWithZXing(feed); } catch(e){ t = ""; }
+
         debug.push(`[ZXING][${item.name}][${deg}] ${t ? t : "(empty)"}`);
 
-        if (t) {
-          // 只要 ZXing 有結果就停（你指定）
-          best = { text:t, candName:item.name, deg, feedCanvas: feed };
+        // ✅ 只接受像 GS1 的結果（避免邊緣亂碼）
+        if (t && hasGS1Core(t)) {
           debug.push(`[ZXING][BEST] ${item.name} @ ${deg}`);
-          return best;
+          return { text:t, cand:item.name, deg, feedCanvas: feed };
         }
       }
     }
+
     debug.push(`[ZXING][BEST] -`);
-    return best;
+    return { text:"", cand:"", deg:null, feedCanvas:null };
   }
 
-  // ============ OCR ============
+  // ===== OCR fallback（只有 ZXing 全 fail 才跑）=====
   async function ensureTesseractLoaded() {
     if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
       throw new Error("Tesseract.js v7 未載入成功");
     }
   }
-
   let ocrWorker = null;
   async function getOcrWorker() {
     await ensureTesseractLoaded();
@@ -381,36 +372,58 @@
     ocrWorker = await Tesseract.createWorker("eng");
     return ocrWorker;
   }
-
   function tooSmallForOCR(w,h){ return (w < 80 || h < 28); }
 
-  async function ocrTryCandidates(scanCrop, debug) {
+  function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
+    const c = document.createElement("canvas");
+    c.width = baseCanvas.width;
+    c.height = baseCanvas.height;
+    const g = c.getContext("2d");
+    g.drawImage(baseCanvas, 0, 0);
+    const img = g.getImageData(0,0,c.width,c.height);
+    const d = img.data;
+    for (let i=0;i<d.length;i+=4){
+      const r=d[i], gg=d[i+1], b=d[i+2];
+      let y = 0.299*r + 0.587*gg + 0.114*b;
+      y = (y - 128) * contrast + 128;
+      y = Math.max(0, Math.min(255, y));
+      const v = (y > threshold) ? 255 : 0;
+      d[i]=d[i+1]=d[i+2]=v;
+    }
+    g.putImageData(img,0,0);
+    return c;
+  }
+
+  // ✅ OCR：用「長條內的下方細帶」當文字候選（偏向你引導的拍法）
+  function buildTextBandCandidates(scanCrop) {
     const W = scanCrop.width, H = scanCrop.height;
 
-    // 文字候選：下40（水平）、左40/右40（直拍）
-    const cand = [
-      { name:"BOT40", c: cropSub(scanCrop, 0, H*0.60, W, H*0.40) },
-      { name:"LEFT40", c: cropSub(scanCrop, 0, 0, W*0.40, H) },
-      { name:"RIGHT40", c: cropSub(scanCrop, W*0.60, 0, W*0.40, H) },
-    ];
+    // 文字通常在條碼下方：取下 35% 當文字帶
+    const bandY = Math.floor(H * 0.55);
+    const bandH = Math.max(1, Math.floor(H * 0.45));
 
+    const c = cropSub(scanCrop, 0, bandY, W, bandH);
+    return [{ name:"TEXT_BAND", canvas: c }];
+  }
+
+  async function ocrFallbackText(scanCrop, debug) {
     const worker = await getOcrWorker();
-    const angles = [0,90,180,270];
     const opts = { tessedit_char_whitelist:"0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-", tessedit_pageseg_mode:"7" };
+    const angles = [0,90,180,270];
 
-    let best = { text:"", candName:"", deg:null, rawCanvas:null, enhCanvas:null };
-
-    for (const item of cand) {
-      if (tooSmallForOCR(item.c.width, item.c.height)) {
-        debug.push(`[OCR][${item.name}] SKIP too small ${item.c.width}x${item.c.height}`);
+    const textCands = buildTextBandCandidates(scanCrop);
+    for (const item of textCands) {
+      if (tooSmallForOCR(item.canvas.width, item.canvas.height)) {
+        debug.push(`[OCR][${item.name}] SKIP too small ${item.canvas.width}x${item.canvas.height}`);
         continue;
       }
 
-      const enh = enhanceForOcr(item.c, 1.6, 170);
+      const enh = enhanceForOcr(item.canvas, 1.6, 170);
 
+      // raw + enh 各跑四方向
       for (const variant of [
-        { v:"RAW", canvas:item.c },
-        { v:"ENH", canvas:enh },
+        { v:"RAW", canvas:item.canvas },
+        { v:"ENH", canvas:enh }
       ]) {
         for (const deg of angles) {
           const feed = (deg===0) ? variant.canvas : rotateCanvas(variant.canvas, deg);
@@ -426,20 +439,18 @@
           debug.push(`[OCR][${item.name}][${variant.v}][${deg}] ${t ? t : "(empty)"}`);
 
           if (t && (t.includes("01") || t.includes("17") || t.includes("(01") || t.includes("(17"))) {
-            // OCR 只要抓到像 GS1 的訊號就回傳（fallback）
-            best = { text:t, candName:`${item.name}-${variant.v}`, deg, rawCanvas:item.c, enhCanvas:enh };
-            debug.push(`[OCR][BEST] ${best.candName} @ ${deg}`);
-            return best;
+            debug.push(`[OCR][BEST] ${item.name}-${variant.v} @ ${deg}`);
+            return { text:t, cand:`${item.name}-${variant.v}`, deg, rawCanvas:item.canvas, enhCanvas:enh };
           }
         }
       }
     }
 
     debug.push(`[OCR][BEST] -`);
-    return best;
+    return { text:"", cand:"", deg:null, rawCanvas:null, enhCanvas:null };
   }
 
-  // ============ Main ============
+  // ===== Main =====
   async function analyzeFromWorkCanvas() {
     loader.style.display = "block";
     const debug = [];
@@ -448,46 +459,39 @@
     const rect = getScanBoxRect();
     const scanCrop = cropCanvas(rect, 2.6);
 
-    // 顯示 scanCrop
+    // debug images
     document.getElementById('imgScanCrop').src = canvasToDataURL(scanCrop, 0.92);
 
-    // 1) ZXing 先做（候選區 + 旋轉）
-    setStatus("📡 ZXing 解碼條碼（候選區 / 自動旋轉）...");
-    const z = await zxingTryCandidates(scanCrop, debug);
+    // 1) ZXing：長條 ROI 掃描（重疊 + padding）+ 旋轉
+    setStatus("📡 ZXing：長條 ROI 掃描（重疊+padding）...");
+    const z = await zxingScanLongBar(scanCrop, debug);
 
     if (z.text) {
-      // 顯示 ZXing feed
       document.getElementById('imgZxingFeed').src = canvasToDataURL(z.feedCanvas, 0.92);
-      // OCR 這次不跑（你指定 ZXing 成功就停）
       document.getElementById('imgOcrRaw').src = "";
       document.getElementById('imgOcrEnh').src = "";
 
       return {
-        source: `ZXING_${z.candName}_${z.deg}`,
+        source: `ZXING_${z.cand}_${z.deg}`,
         raw: z.text,
         data: extractGS1Data(z.text),
-        debug_text: debug.join("\n"),
-        scanCrop
+        debug_text: debug.join("\n")
       };
     }
 
-    // 2) OCR fallback（候選區）
-    setStatus("⚠️ ZXing 未解到，改用 OCR fallback（候選文字區）...");
-    const o = await ocrTryCandidates(scanCrop, debug);
+    // 2) OCR fallback：文字帶（下方細帶）
+    setStatus("⚠️ ZXing 未解到，改用 OCR fallback（文字帶）...");
+    const o = await ocrFallbackText(scanCrop, debug);
 
-    // 顯示 OCR feed（raw/enh）
+    document.getElementById('imgZxingFeed').src = "";
     if (o.rawCanvas) document.getElementById('imgOcrRaw').src = canvasToDataURL(o.rawCanvas, 0.92);
     if (o.enhCanvas) document.getElementById('imgOcrEnh').src = canvasToDataURL(o.enhCanvas, 0.92);
 
-    // ZXing feed 空
-    document.getElementById('imgZxingFeed').src = "";
-
     return {
-      source: o.text ? `OCR_${o.candName}_${o.deg}` : "OCR_NONE",
+      source: o.text ? `OCR_${o.cand}_${o.deg}` : "OCR_NONE",
       raw: o.text || "",
       data: extractGS1Data(o.text || ""),
-      debug_text: debug.join("\n"),
-      scanCrop
+      debug_text: debug.join("\n")
     };
   }
 
@@ -524,7 +528,7 @@
     );
   }
 
-  // ============ Camera / UI ============
+  // ===== Camera / UI =====
   async function startCamera() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -534,7 +538,7 @@
       document.getElementById('displayArea').style.display = 'block';
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
-      setStatus("請把「條碼 + 下方那行字」一起放進框內（避免反光、靠近一點）。");
+      setStatus("請把條碼『橫放』對準長條框（避免反光、靠近一點）。");
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
     }
@@ -575,7 +579,7 @@
     document.getElementById('sourcePill').style.display = 'none';
   }
 
-  // ============ Submit（後台 payload：不傳 product_code） ============
+  // ===== Submit（後台 payload：不傳 product_code）=====
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
     const payload = {
