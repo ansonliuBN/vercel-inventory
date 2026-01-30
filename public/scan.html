@@ -96,7 +96,8 @@
   </div>
 
   <!-- 本地 ZXing -->
-  <script src="/libs/zxing/zxing-browser.min.js"></script>
+  //<script src="/libs/zxing/zxing-browser.min.js"></script>
+  <script src="https://unpkg.com/@zxing/browser@latest"></script>
 
   <!-- OCR（若你之後也被擋，我再幫你本地化） -->
   <script src="https://unpkg.com/tesseract.js@v4.0.2/dist/tesseract.min.js"></script>
@@ -374,6 +375,16 @@
       setBusy(true);
       setStatus('🟣 start() 觸發了：準備開相機…');
 
+      // 修正：相容不同版本的 ZXing 載入方式
+    const ZXing = window.ZXingBrowser || window.ZXing;
+      if (!ZXing) {
+          setBusy(false);
+          setStatus('<b style="color:red">❌ 找不到 ZXing 套件</b><br>請檢查網路或腳本路徑');
+          return;
+      }
+
+    const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = ZXing;
+
       if (!window.ZXingBrowser) {
         setBusy(false);
         setStatus('<b style="color:red">❌ ZXing 未載入</b><br>請確認 /libs/zxing/zxing-browser.min.js 可被存取');
@@ -396,6 +407,7 @@
       scanning = true;
       stopAllTimers();
 
+      alert('準備請求權限');
       try{
         await openCameraRobust();
       } catch(e){
