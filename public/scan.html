@@ -115,6 +115,76 @@
       .replace(/O/g, '0');
   }
 
+  function rotateDataUrl(dataUrl, deg) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const rad = deg * Math.PI / 180;
+        const c = document.createElement('canvas');
+        const cctx = c.getContext('2d');
+
+        const w = img.width, h = img.height;
+        if (deg % 180 !== 0) { c.width = h; c.height = w; }
+        else { c.width = w; c.height = h; }
+
+        cctx.translate(c.width / 2, c.height / 2);
+        cctx.rotate(rad);
+        cctx.drawImage(img, -w / 2, -h / 2);
+
+        resolve(c.toDataURL('image/jpeg', 0.95));
+      };
+      img.src = dataUrl;
+    });
+  }
+
+  async function ocrBarcodeAutoRotate(inputDataUrl) {
+    const angles = [0, 90, 180, 270];
+
+    // 讓 OCR 不要亂猜英文，逼它只認 GS1 常見字元
+    const options = {
+      tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE
+    };
+
+    for (const deg of angles) {
+      const dataUrl = (deg === 0) ? inputDataUrl : await rotateDataUrl(inputDataUrl, deg);
+
+      const res = await Tesseract.recognize(dataUrl, 'eng', options);
+      let text = (res.data.text || "");
+
+      // 清理雜訊：去空白 + 常見誤判字元修正
+      text = text.replace(/\s+/g, '');
+      text = text.replace(/[Il|]/g, '1').replace(/O/g, '0');
+
+      // 關鍵字驗證：你說的核心策略
+      if (text.includes("(01)") && text.includes("(17)")) {
+        return text;
+      }
+    }
+    return ""; // 四個方向都沒中
+  }
+
+  function extractGS1Data(text) {
+    const s = (text || "").replace(/\s+/g,'').replace(/[Il|]/g,'1').replace(/O/g,'0');
+
+    // GTIN
+    const m01 = s.match(/\(01\)(\d{14})/);
+    // EXP YYMMDD
+    const m17 = s.match(/\(17\)(\d{6})/);
+
+    // Serial (21) 或 Lot (10)
+    const m21 = s.match(/\(21\)([A-Z0-9\-]+)/);
+    const m10 = s.match(/\(10\)([A-Z0-9\-]+)/);
+
+    const gtin = m01 ? m01[1] : "";
+    const exp = m17 ? m17[1] : "";
+    const lotOrSn = (m21 && m21[1]) ? m21[1] : ((m10 && m10[1]) ? m10[1] : "");
+
+    return { gtin, exp, lot: lotOrSn };
+  }
+
+
+
   function parseGS1(raw) {
     const s = normalizeText(raw);
     const out = { gtin: '', exp: '', lot: '' };
@@ -356,35 +426,57 @@
     document.getElementById('guidelines').style.display = 'none';
   }
 
-  async function triggerAnalysis() {
+  async function triggerAnalysis(imgData) {
     loader.style.display = 'block';
     document.getElementById('status').innerText = "⌛ 先嘗試讀條碼（Quagga）...";
 
     try {
-      let foundText = await decodeBarcodeRobust();
+      let foundText = "";
 
-      if (!foundText) {
-        document.getElementById('status').innerText = "🧭 條碼沒抓到，啟動 OCR 強攻...";
-        foundText = await ocrStrongAttack();
+      // 1) 先用 Quagga（你原本的 quaggaDecodeFromDataURL + crop 邏輯可保留）
+      // 這裡我沿用你已有的：getScanBoxRect / cropCanvasToDataURL / quaggaDecodeFromDataURL / looksLikeGS1
+      const rects = getScanRectsWithOffsets();
+      const scales = [1.0, 1.6, 2.2];
+
+      for (const rect of rects) {
+        for (const scale of scales) {
+          const croppedDataUrl = cropCanvasToDataURL(rect, scale);
+          const candidate = await quaggaDecodeFromDataURL(croppedDataUrl);
+          if (candidate && looksLikeGS1(candidate)) {
+            foundText = candidate;
+            break;
+          }
+        }
+        if (foundText) break;
       }
 
-      const gs1 = parseGS1(foundText);
+      // 2) Quagga 失敗 → OCR 暴力旋轉強攻（你說的那套）
+      if (!foundText) {
+        document.getElementById('status').innerText = "🧨 條碼沒抓到，啟動 OCR 暴力旋轉強攻...";
+        const rect = getScanBoxRect();
+        const ocrTarget = cropCanvasToDataURL(rect, 2.2);
+        foundText = await ocrBarcodeAutoRotate(ocrTarget);
+      }
 
-      document.getElementById('editGtin').value = gs1.gtin;
-      document.getElementById('editLot').value = gs1.lot || normalizeText(foundText).replace(/[^A-Za-z0-9]/g, '').substring(0,12);
-      document.getElementById('editExp').value = gs1.exp;
+      // 3) 抽資料
+      const data = extractGS1Data(foundText);
+
+      document.getElementById('editGtin').value = data.gtin;
+      document.getElementById('editLot').value = data.lot || foundText.replace(/[^A-Za-z0-9]/g, '').substring(0,12);
+      document.getElementById('editExp').value = data.exp;
 
       loader.style.display = 'none';
       document.getElementById('reviewArea').style.display = 'block';
 
       document.getElementById('status').innerText =
-        gs1.gtin ? "辨識完成，請複核資料。" : "⚠️ 沒抓到完整 GS1，請人工複核或重拍。";
+        (data.gtin && data.exp) ? "辨識完成，請複核資料。" : "⚠️ 未抓到完整 (01)/(17)，建議重拍或人工修正。";
 
     } catch (err) {
       alert("辨識發生錯誤: " + err.message);
       location.reload();
     }
   }
+
 
   // ---------- Submit (unchanged) ----------
   async function finalSubmit() {
