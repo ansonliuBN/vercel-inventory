@@ -1,16 +1,3 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<title>OCR Test (NO MODULE)</title>
-</head>
-<body>
-
-<h3>OCR Test</h3>
-<input type="file" id="file" accept="image/*">
-<pre id="out">頁面已載入\n</pre>
-
-<!-- 不用 module，不用 import -->
 <script src="/tesseract/tesseract.min.js"></script>
 
 <script>
@@ -19,25 +6,27 @@ const fileInput = document.getElementById("file");
 
 out.textContent += "Tesseract global = " + (typeof Tesseract) + "\n";
 
-let worker;
+let worker = null;
 
 async function initWorker() {
   out.textContent += "初始化 worker...\n";
 
-  worker = Tesseract.createWorker({
+  worker = await Tesseract.createWorker({
     workerPath: "/tesseract/worker.min.js",
     corePath: "/tesseract/tesseract-core.wasm",
-    langPath: "/tessdata"
+    langPath: "/tessdata",
+    logger: m => {
+      // console.log(m); // 有需要再打開
+    }
   });
 
-  await worker.load();
-  out.textContent += "worker loaded\n";
-
+  out.textContent += "載入語言...\n";
   await worker.loadLanguage("eng");
-  out.textContent += "language loaded\n";
 
+  out.textContent += "初始化 OCR 引擎...\n";
   await worker.initialize("eng");
-  out.textContent += "worker initialized\n";
+
+  out.textContent += "OCR worker ready ✅\n";
 }
 
 fileInput.addEventListener("change", async () => {
@@ -58,6 +47,3 @@ fileInput.addEventListener("change", async () => {
   }
 });
 </script>
-
-</body>
-</html>
