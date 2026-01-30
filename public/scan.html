@@ -2,128 +2,86 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>業務端 - 掃描入庫</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GS1-128 即時掃描</title>
 <style>
-body { font-family: -apple-system, sans-serif; padding:20px; background:#f4f4f9; text-align:center }
-.card { background:white; padding:20px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,.1) }
-button { background:#7360f2; color:white; border:none; padding:18px; border-radius:10px; width:100%; font-size:18px; font-weight:bold; margin-bottom:12px }
-.back-btn { background:#666 }
-#status { margin-top:15px; font-size:14px; min-height:50px; word-break:break-all }
-canvas { width:100%; border:2px solid #7360f2; margin-top:10px; border-radius:10px; display:none }
-.spinner { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #eee; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite }
-@keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+body { font-family:-apple-system; background:#f4f4f9; padding:20px; text-align:center }
+.card { background:#fff; padding:20px; border-radius:15px; box-shadow:0 4px 15px rgba(0,0,0,.1) }
+video { width:100%; border-radius:10px; border:2px solid #7360f2 }
+#status { margin-top:12px; font-size:14px; word-break:break-all }
 </style>
 </head>
-
 <body>
 
 <div class="card">
-  <h2>📷 GS1-128 條碼掃描</h2>
-  <p style="font-size:13px;color:#888">請直接對準「條碼」拍照（不用刻意拍數字）</p>
-
-  <input type="file" id="photo" accept="image/*" capture="environment" hidden>
-  <button onclick="photo.click()">📸 開啟相機</button>
-  <button class="back-btn" onclick="location.href='index.html'">⬅️ 回總表</button>
-
-  <div class="spinner" id="spin"></div>
-  <canvas id="preview"></canvas>
-  <div id="status">準備就緒</div>
+  <h2>📦 GS1-128 即時掃描</h2>
+  <p style="font-size:13px;color:#888">請把條碼「橫著」對準鏡頭</p>
+  <video id="video" autoplay muted playsinline></video>
+  <div id="status">啟動相機中…</div>
 </div>
 
-<!-- ZXing（條碼解碼，主力） -->
 <script type="module">
 import { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat }
-  from "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/+esm";
+  from "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm";
 
-const photo = document.getElementById('photo');
 const status = document.getElementById('status');
-const spin = document.getElementById('spin');
-const canvas = document.getElementById('preview');
+const video = document.getElementById('video');
 
 const hints = new Map();
 hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.CODE_128]);
-hints.set(DecodeHintType.TRY_HARDER, true);
 
-const reader = new BrowserMultiFormatReader(hints, 800);
+const reader = new BrowserMultiFormatReader(hints);
 
-/* GS1 raw parser（支援 01 / 11 / 17 / 10） */
 function parseGS1(raw) {
-  raw = raw.replace(/\((\d{2})\)/g, '$1');
-  let i = 0, o = {};
-  const read = n => raw.slice(i, i+=n);
-
-  while (i < raw.length) {
-    const ai = raw.slice(i, i+2); i+=2;
-    if (ai==='01') o.gtin = read(14);
-    else if (ai==='11') o.mfg = read(6);
-    else if (ai==='17') o.exp = read(6);
-    else if (ai==='10') { o.lot = raw.slice(i); break; }
+  raw = raw.replace(/\((\d{2})\)/g,'$1');
+  let i=0,o={};
+  const r=n=>raw.slice(i,i+=n);
+  while(i<raw.length){
+    const ai=raw.slice(i,i+2); i+=2;
+    if(ai==='01') o.gtin=r(14);
+    else if(ai==='11') o.mfg=r(6);
+    else if(ai==='17') o.exp=r(6);
+    else if(ai==='10'){ o.lot=raw.slice(i); break;}
     else break;
   }
-
-  const serial8 = (o.lot||'').replace(/-.+$/,'').slice(0,8);
-  o.key = (o.mfg && o.exp && serial8) ? `${o.mfg}_${o.exp}_${serial8}` : '';
+  const s=(o.lot||'').replace(/-.+$/,'').slice(0,8);
+  o.key=o.mfg&&o.exp&&s?`${o.mfg}_${o.exp}_${s}`:'';
   return o;
 }
 
-function fileToURL(file){
-  return new Promise(r=>{
-    const fr=new FileReader();
-    fr.onload=()=>r(fr.result);
-    fr.readAsDataURL(file);
-  });
-}
+reader.decodeFromVideoDevice(
+  null,
+  video,
+  (result, err) => {
+    if (result) {
+      const raw = result.getText();
+      const g = parseGS1(raw);
 
-photo.onchange = async () => {
-  const file = photo.files[0];
-  if(!file) return;
+      if (!g.key) return;
 
-  spin.style.display='block';
-  status.innerText='🔍 正在解碼 GS1-128 條碼...';
+      status.innerHTML =
+        `<b style="color:green">✅ 掃描成功</b><br>
+         ${raw}<br>
+         KEY: ${g.key}`;
 
-  try{
-    const url = await fileToURL(file);
-    const result = await reader.decodeFromImageUrl(url);
-    const raw = result.getText();   // ⭐ 真正的 GS1 raw
+      reader.reset(); // 停止掃描
 
-    const gs1 = parseGS1(raw);
+      fetch('/api/stock',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          item_uuid:g.key,
+          product_code:g.gtin,
+          expiry_date:g.exp,
+          from_loc:'FACTORY',
+          to_loc:'MAIN',
+          operator:'即時掃描'
+        })
+      });
 
-    if(!gs1.key) throw '解析失敗';
-
-    status.innerHTML =
-      `<b style="color:green">✅ 成功</b><br>
-       Raw: ${raw}<br>
-       GTIN: ${gs1.gtin}<br>
-       MFG: ${gs1.mfg}<br>
-       EXP: ${gs1.exp}<br>
-       LOT: ${gs1.lot}<br>
-       KEY: ${gs1.key}`;
-
-    // 👉 直接送後端
-    await fetch('/api/stock',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        item_uuid: gs1.key,
-        product_code: gs1.gtin,
-        expiry_date: gs1.exp,
-        from_loc:'FACTORY',
-        to_loc:'MAIN',
-        operator:'GS1掃描'
-      })
-    });
-
-    alert(`✅ 已入庫：${gs1.key}`);
-
-  }catch(e){
-    status.innerHTML = `<b style="color:red">❌ 條碼解碼失敗</b><br>請拍近一點、避免反光`;
-  }finally{
-    spin.style.display='none';
-    photo.value='';
+    }
   }
-};
+);
 </script>
 
 </body>
