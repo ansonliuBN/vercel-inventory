@@ -36,7 +36,7 @@
 
   .overlay { position:absolute; inset:0; pointer-events:none; }
 
-  /* ✅ 使用者對準的「長條框」 */
+  /* ✅ 使用者對準的「長條框」(UI guide) */
   .scan-box {
     position:absolute;
     left:50%;
@@ -126,7 +126,7 @@
         <img id="imgWorkThumb" alt="work thumb">
       </div>
       <div class="debug-card">
-        <b>SCAN_CROP（長條框切圖）</b>
+        <b>SCAN_CROP（大ROI切圖：條碼+文字）</b>
         <img id="imgScanCrop" alt="scan crop">
       </div>
       <div class="debug-card">
@@ -177,18 +177,14 @@
 
   // ===== ✅ Auto tracking controls =====
   let autoTimer = null;
-  let autoBusy = false;      // avoid concurrent zxing calls
-  let autoFound = false;     // stop after success
+  let autoBusy = false;
+  let autoFound = false;
   const AUTO_INTERVAL_MS = 280;
-  const AUTO_FAIL_BEFORE_BROADEN = 12; // ~3.3s
+  const AUTO_FAIL_BEFORE_BROADEN = 10; // ~2.8s
   let autoFailCount = 0;
 
   function stopStream() {
-    try {
-      if (stream) {
-        stream.getTracks().forEach(t => t.stop());
-      }
-    } catch(e) {}
+    try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(e) {}
     stream = null;
   }
 
@@ -205,41 +201,31 @@
 
       autoBusy = true;
       try {
-        // draw current frame to workCanvas
         workCanvas.width = video.videoWidth;
         workCanvas.height = video.videoHeight;
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
         ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
 
-        // Fast ZXing-only probe (no OCR) to keep tracking snappy
         const probe = await quickProbeZXingFromWorkCanvas();
-
         if (probe && probe.raw && hasGS1Core(probe.raw)) {
           autoFound = true;
           stopAutoTrack();
 
-          // freeze frame as base64 and jump to review
           const base64 = workCanvas.toDataURL('image/jpeg', 0.92);
           preview.src = base64;
-
           prepareUIForAnalysis();
 
-          // optional: stop camera to release it
           stopStream();
-
-          // now run full pipeline (ZXing first, OCR fallback) to populate fields/debug
           await triggerAnalysisFromBase64(base64);
           return;
         } else {
           autoFailCount++;
-          // Status hints
-          if (autoFailCount < 3) setStatus("🔎 自動追蹤中…請把條碼『橫放』對準長條框，靠近一點、避反光。");
-          else if (autoFailCount < AUTO_FAIL_BEFORE_BROADEN) setStatus("🔎 還在追蹤…可稍微左右移動/調整距離，讓條碼更清晰。");
-          else setStatus("🔎 追蹤加強中…（嘗試更大範圍掃描）");
+          if (autoFailCount < 3) setStatus("🔎 自動追蹤中…條碼放滿框內、避免反光。");
+          else if (autoFailCount < AUTO_FAIL_BEFORE_BROADEN) setStatus("🔎 追蹤中…可稍微靠近/移動讓條紋更清楚。");
+          else setStatus("🔎 追蹤加強中…（放大 ROI 再掃一次）");
         }
       } catch(e) {
-        // ignore transient errors during tracking
       } finally {
         autoBusy = false;
       }
@@ -267,6 +253,7 @@
     });
   }
 
+  // ✅ 這版 normalize 不移除括號（保留給 debug/人看），但 GS1 判斷/抽取會另外做 compact
   function normalizeText(raw) {
     return (raw || "")
       .replace(/\s+/g, '')
@@ -281,12 +268,17 @@
     return has01 && has17;
   }
 
+  // ✅ 更保守：lot/serial 抽取不要貪吃到後面
   function extractGS1Data(text) {
     const s = normalizeText(text);
+
     const m01 = s.match(/\(01\)(\d{14})/) || s.match(/01(\d{14})/);
     const m17 = s.match(/\(17\)(\d{6})/) || s.match(/17(\d{6})/);
-    const m21 = s.match(/\(21\)([A-Z0-9\-]+)/) || s.match(/21([A-Z0-9\-]+)/);
-    const m10 = s.match(/\(10\)([A-Z0-9\-]+)/) || s.match(/10([A-Z0-9\-]+)/);
+
+    // 可變長度：遇到下一個 AI (01/11/17/10/21) 就停（或遇到括號）
+    const m21 = s.match(/\(21\)([A-Z0-9\-]{1,40})/) || s.match(/21([A-Z0-9\-]{1,40})(?=(?:\(?01\)?|\(?11\)?|\(?17\)?|\(?10\)?|\(?21\)?|$))/);
+    const m10 = s.match(/\(10\)([A-Z0-9\-]{1,40})/) || s.match(/10([A-Z0-9\-]{1,40})(?=(?:\(?01\)?|\(?11\)?|\(?17\)?|\(?10\)?|\(?21\)?|$))/);
+
     return {
       gtin: m01 ? m01[1] : "",
       exp:  m17 ? m17[1] : "",
@@ -300,13 +292,11 @@
       img.onload = () => {
         workCanvas.width = img.width;
         workCanvas.height = img.height;
-
         ctx.save();
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
         ctx.drawImage(img, 0, 0);
         ctx.restore();
-
         resolve();
       };
       img.onerror = reject;
@@ -332,12 +322,14 @@
     return c;
   }
 
-  // ✅ ROI：跟 UI 框一致（top:52%, width:92%, height:22%）
-  function getScanBoxRectAt(centerRatioY = 0.52) {
+  // ✅ 這版關鍵：ROI 不要切太小
+  // - UI guide 仍然是 22% 高，但我們實際分析用「大ROI」：覆蓋條碼 + (01)(17)(21) 人眼字
+  // - center 跟 UI 一樣 0.52，但高度改成 0.46 (你可調 0.40~0.60)
+  function getBigRoiRect(centerRatioY = 0.52) {
     const cw = workCanvas.width, ch = workCanvas.height;
-    const boxW = cw * 0.95;
-    const boxH = ch * 0.80;
 
+    const boxW = cw * 0.94;      // 幾乎全寬
+    const boxH = ch * 0.46;      // ✅ 大高度：同時吃條碼+文字（重點）
     const cx = cw * 0.5;
     const cy = ch * centerRatioY;
 
@@ -347,17 +339,16 @@
     return { x, y, w: Math.floor(boxW), h: Math.floor(boxH) };
   }
 
-  // ✅ 多 ROI：中/上/下（自動追蹤更穩）
-  function getMultiScanRects() {
-    // 你可以依需求微調這三個中心點
+  // ✅ 自動追蹤用多個大ROI（上中下），更不容易切掉文字
+  function getMultiBigRoiRects() {
     return [
-      getScanBoxRectAt(0.42),
-      getScanBoxRectAt(0.52),
-      getScanBoxRectAt(0.62),
+      getBigRoiRect(0.44),
+      getBigRoiRect(0.52),
+      getBigRoiRect(0.60),
     ];
   }
 
-  function cropCanvas(rect, scale = 2.6) {
+  function cropCanvas(rect, scale = 1.8) {
     const c = document.createElement("canvas");
     c.width = Math.max(10, Math.floor(rect.w * scale));
     c.height = Math.max(10, Math.floor(rect.h * scale));
@@ -365,7 +356,6 @@
 
     g.fillStyle = "#fff";
     g.fillRect(0, 0, c.width, c.height);
-
     g.imageSmoothingEnabled = false;
 
     const sx = Math.max(0, Math.min(workCanvas.width - 1, rect.x));
@@ -412,24 +402,25 @@
     return canvas.toDataURL("image/jpeg", q);
   }
 
-  function buildLongBarCandidates(scanCrop) {
-    const W = scanCrop.width, H = scanCrop.height;
+  // ✅ ZXing 候選：不要再做「超扁長條」了
+  // 這版做「中間 60~80% 高度」的幾個重疊窗，保留足夠高度給 1D
+  function buildCode128Candidates(bigCrop) {
+    const W = bigCrop.width, H = bigCrop.height;
 
-    const roiW = Math.floor(W * 0.92);
+    // 主窗：吃中間 78% 高度（避免上下雜訊過多，又不會太扁）
+    const roiW = Math.floor(W * 0.96);
     const roiH = Math.floor(H * 0.78);
-    const stepY = Math.max(1, Math.floor(H * 0.10));
     const left = Math.floor((W - roiW) / 2);
 
+    // 垂直滑動：重疊取樣，避免條碼/文字偏上偏下
+    const stepY = Math.max(1, Math.floor(H * 0.10));
     const list = [];
     for (let y=0; y<=Math.max(0, H - roiH); y+=stepY) {
-      list.push({ name:`BAR_Y${y}`, canvas: cropSub(scanCrop, left, y, roiW, roiH) });
+      list.push({ name:`WIN_Y${y}`, canvas: cropSub(bigCrop, left, y, roiW, roiH) });
     }
 
-    const padH = Math.min(H, Math.floor(roiH * 1.18));
-    const padY = Math.max(0, Math.floor((H - padH) / 2));
-    list.unshift({ name:`BAR_PAD_CENTER`, canvas: cropSub(scanCrop, left, padY, roiW, padH) });
-
-    list.unshift({ name:`FULL`, canvas: scanCrop });
+    // 保底：整張大ROI
+    list.unshift({ name:`FULL_BIG`, canvas: bigCrop });
     return list;
   }
 
@@ -456,13 +447,23 @@
     await prepareZXingReaderModuleOnce();
     const g = canvasForZXing.getContext("2d", { willReadFrequently: true });
     const imgData = g.getImageData(0,0,canvasForZXing.width, canvasForZXing.height);
-    const results = await window.ZXingWASM.readBarcodes(imgData, { tryHarder: true, maxNumberOfSymbols: 1 });
+
+    const results = await window.ZXingWASM.readBarcodes(imgData, {
+      tryHarder: true,
+      maxNumberOfSymbols: 2
+    });
+
     if (!results || !results.length) return "";
+    // 有時候會回多個，挑最像 GS1 的
+    for (const r of results) {
+      const t = r?.text || "";
+      if (t && (hasGS1Core(t) || /(?:\(?01\)?\d{14})/.test(normalizeText(t)))) return t;
+    }
     return results[0].text || "";
   }
 
-  async function zxingScanLongBar(scanCrop, debug) {
-    const candidates = buildLongBarCandidates(scanCrop);
+  async function zxingScanBig(bigCrop, debug) {
+    const candidates = buildCode128Candidates(bigCrop);
     const angles = [0, 90, 270, 180];
 
     for (const item of candidates) {
@@ -484,24 +485,21 @@
     return { text:"", cand:"", deg:null, feedCanvas:null };
   }
 
-  // ===== ✅ Fast probe: only ZXing, multi ROI, optionally broaden =====
+  // ===== ✅ Fast probe (auto tracking): ZXing only, big ROI =====
   async function quickProbeZXingFromWorkCanvas() {
-    // no loader, no debug images, keep it light
-    const rects = getMultiScanRects();
-    const debug = null;
+    const rects = getMultiBigRoiRects();
 
-    // Phase A: standard ROI scan
     for (const r of rects) {
-      const scanCrop = cropCanvas(r, 2.2); // slightly lower scale for speed in tracking
-      const z = await zxingScanLongBar(scanCrop, debug);
+      const bigCrop = cropCanvas(r, 1.5); // tracking 要快：scale 小一點
+      const z = await zxingScanBig(bigCrop, null);
       if (z.text) return { raw: z.text };
     }
 
-    // Phase B: if many fails, broaden area (bigger scale & also middle-only but bigger)
+    // 追蹤加強：再放大一次中央 ROI
     if (autoFailCount >= AUTO_FAIL_BEFORE_BROADEN) {
-      const bigRect = getScanBoxRectAt(0.52);
-      const bigCrop = cropCanvas(bigRect, 3.0);
-      const z2 = await zxingScanLongBar(bigCrop, debug);
+      const bigRect = getBigRoiRect(0.52);
+      const bigCrop2 = cropCanvas(bigRect, 2.0);
+      const z2 = await zxingScanBig(bigCrop2, null);
       if (z2.text) return { raw: z2.text };
     }
 
@@ -522,9 +520,9 @@
     ocrWorker = await Tesseract.createWorker("eng");
     return ocrWorker;
   }
-  function tooSmallForOCR(w,h){ return (w < 80 || h < 28); }
+  function tooSmallForOCR(w,h){ return (w < 120 || h < 60); }
 
-  function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
+  function enhanceForOcr(baseCanvas, contrast=1.7, threshold=170) {
     const c = document.createElement("canvas");
     c.width = baseCanvas.width;
     c.height = baseCanvas.height;
@@ -548,27 +546,39 @@
     return c;
   }
 
-  function buildTextBandCandidates(scanCrop) {
-    const W = scanCrop.width, H = scanCrop.height;
-    const bandY = Math.floor(H * 0.52);
-    const bandH = Math.max(1, Math.floor(H * 0.48));
-    const c = cropSub(scanCrop, 0, bandY, W, bandH);
-    return [{ name:"TEXT_BAND", canvas: c }];
+  // ✅ OCR 候選：不要只抓下半帶了
+  // 這版直接 OCR 「整張大ROI」，再加兩個更聚焦的子區（上/下）當備援
+  function buildOcrCandidates(bigCrop) {
+    const W = bigCrop.width, H = bigCrop.height;
+    const list = [];
+
+    list.push({ name:"OCR_FULL_BIG", canvas: bigCrop });
+
+    // 上半（有時 GS1 AI 文字貼近條碼一側/上側）
+    list.push({ name:"OCR_TOP", canvas: cropSub(bigCrop, 0, 0, W, Math.floor(H*0.55)) });
+
+    // 下半（有時 AI 文字在下）
+    list.push({ name:"OCR_BOTTOM", canvas: cropSub(bigCrop, 0, Math.floor(H*0.40), W, Math.floor(H*0.60)) });
+
+    return list;
   }
 
-  async function ocrFallbackText(scanCrop, debug) {
+  async function ocrFallbackText(bigCrop, debug) {
     const worker = await getOcrWorker();
-    const opts = { tessedit_char_whitelist:"0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-", tessedit_pageseg_mode:"7" };
+    const opts = {
+      tessedit_char_whitelist:"0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+      tessedit_pageseg_mode:"6" // 比 7 更能吃多行/多區
+    };
     const angles = [0,90,180,270];
 
-    const textCands = buildTextBandCandidates(scanCrop);
-    for (const item of textCands) {
+    const cands = buildOcrCandidates(bigCrop);
+    for (const item of cands) {
       if (tooSmallForOCR(item.canvas.width, item.canvas.height)) {
         debug.push(`[OCR][${item.name}] SKIP too small ${item.canvas.width}x${item.canvas.height}`);
         continue;
       }
 
-      const enh = enhanceForOcr(item.canvas, 1.6, 170);
+      const enh = enhanceForOcr(item.canvas, 1.7, 170);
 
       for (const variant of [
         { v:"RAW", canvas:item.canvas },
@@ -587,7 +597,8 @@
 
           debug.push(`[OCR][${item.name}][${variant.v}][${deg}] ${t ? t : "(empty)"}`);
 
-          if (t && (t.includes("01") || t.includes("17") || t.includes("(01") || t.includes("(17"))) {
+          // 只要看到 01/17 任一就先收，後面再用 extract 去拼
+          if (t && (/(?:\(?01\)?\d{14})/.test(t) || /(?:\(?17\)?\d{6})/.test(t))) {
             debug.push(`[OCR][BEST] ${item.name}-${variant.v} @ ${deg}`);
             return { text:t, cand:`${item.name}-${variant.v}`, deg, rawCanvas:item.canvas, enhCanvas:enh };
           }
@@ -607,14 +618,15 @@
 
     document.getElementById('imgWorkThumb').src = canvasToPreviewURL(makeThumb(workCanvas, 420, 420));
 
-    // ✅ 用「中央 ROI」做正式分析（auto track 成功後也會走這條，debug 圖一致）
-    const rect = getScanBoxRectAt(0.52);
-    const scanCrop = cropCanvas(rect, 2.6);
+    // ✅ 正式分析：用「大ROI」
+    const rect = getBigRoiRect(0.52);
+    const bigCrop = cropCanvas(rect, 2.0);
 
-    document.getElementById('imgScanCrop').src = canvasToPreviewURL(makeThumb(scanCrop, 420, 420));
+    document.getElementById('imgScanCrop').src = canvasToPreviewURL(makeThumb(bigCrop, 420, 420));
 
-    setStatus("📡 ZXing：長條 ROI 掃描（重疊+padding）...");
-    const z = await zxingScanLongBar(scanCrop, debug);
+    // 1) ZXing
+    setStatus("📡 ZXing：大ROI 掃描（保留高度，避免切太小）...");
+    const z = await zxingScanBig(bigCrop, debug);
 
     if (z.text) {
       document.getElementById('imgZxingFeed').src = canvasToPreviewURL(makeThumb(z.feedCanvas, 420, 420));
@@ -629,8 +641,9 @@
       };
     }
 
-    setStatus("⚠️ ZXing 未解到，改用 OCR fallback（文字帶）...");
-    const o = await ocrFallbackText(scanCrop, debug);
+    // 2) OCR fallback（整張大ROI）
+    setStatus("⚠️ ZXing 未解到，改用 OCR fallback（整張大ROI）...");
+    const o = await ocrFallbackText(bigCrop, debug);
 
     document.getElementById('imgZxingFeed').src = "";
     if (o.rawCanvas) document.getElementById('imgOcrRaw').src = canvasToPreviewURL(makeThumb(o.rawCanvas, 420, 420));
@@ -663,7 +676,7 @@
     showSourcePill(result.source);
 
     document.getElementById('editLot').value =
-      data.lot || normalizeText(result.raw).replace(/[^A-Za-z0-9]/g, '').substring(0, 24);
+      data.lot || normalizeText(result.raw).replace(/[^A-Za-z0-9]/g, '').substring(0, 32);
 
     document.getElementById('editExp').value = data.exp || "";
 
@@ -684,6 +697,7 @@
         video: { facingMode: "environment", width: { ideal: 1920 } }
       });
       video.srcObject = stream;
+
       document.getElementById('displayArea').style.display = 'block';
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
@@ -691,9 +705,7 @@
       video.style.display = 'block';
       preview.style.display = 'none';
 
-      setStatus("🔎 已啟動自動追蹤：把條碼『橫放』對準長條框，抓到就會自動跳出複核。你也可隨時按拍照。");
-
-      // ✅ 自動追蹤開始
+      setStatus("🔎 自動追蹤中：條碼對準長條框即可（這版分析用更大的ROI，不怕上下多吃到背景）。你也可按拍照。");
       startAutoTrack();
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
@@ -716,7 +728,6 @@
       return;
     }
 
-    // ✅ 使用者手動拍照時：先停自動追蹤，避免同時在掃
     stopAutoTrack();
 
     workCanvas.width = video.videoWidth;
@@ -735,7 +746,6 @@
   }
 
   function prepareUIForAnalysis() {
-    // ✅ 進入分析/複核：停掉追蹤
     stopAutoTrack();
 
     video.style.display = 'none';
@@ -747,7 +757,7 @@
     document.getElementById('sourcePill').style.display = 'none';
   }
 
-  // ===== Submit（後台 payload：不傳 product_code）=====
+  // ===== Submit =====
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
     const payload = {
