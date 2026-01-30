@@ -213,13 +213,25 @@
   }
 
   function cropCanvas(rect, scale = 1.0) {
+    const safeW = Math.max(10, Math.floor(rect.w * scale));
+    const safeH = Math.max(10, Math.floor(rect.h * scale));
+
     const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.floor(rect.w * scale));
-    c.height = Math.max(1, Math.floor(rect.h * scale));
+    c.width = safeW;
+    c.height = safeH;
+
     const cctx = c.getContext("2d");
-    cctx.drawImage(workCanvas, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
+
+    // clamp source rect
+    const sx = Math.max(0, Math.min(workCanvas.width - 1, rect.x));
+    const sy = Math.max(0, Math.min(workCanvas.height - 1, rect.y));
+    const sw = Math.max(1, Math.min(workCanvas.width - sx, rect.w));
+    const sh = Math.max(1, Math.min(workCanvas.height - sy, rect.h));
+
+    cctx.drawImage(workCanvas, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return c;
   }
+
 
   function canvasToDataURL(canvas, quality = 0.95) {
     return canvas.toDataURL("image/jpeg", quality);
@@ -311,6 +323,10 @@
 
     try {
       await drawBase64ToWorkCanvas(base64Img);
+      if (workCanvas.width < 50 || workCanvas.height < 50) {
+        throw new Error(`影像載入失敗或尺寸過小：${workCanvas.width}x${workCanvas.height}`);
+      }
+
 
       const rect = getScanBoxRect();
       const crop = cropCanvas(rect, 2.6);
