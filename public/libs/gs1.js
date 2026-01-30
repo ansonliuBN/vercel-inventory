@@ -66,10 +66,28 @@ function findLotAfterExp(s, expEndIndex) {
 }
 
 function cleanupLot(v) {
-  return (v || "")
-    .replace(/[^A-Z0-9\-]/gi, "")
-    .slice(0, 60);
+  const s = (v || "").toUpperCase().replace(/[^A-Z0-9\-]/g, "");
+
+  // 目標：XXXX9999-G02（-後只抓 1 字母 + 2 數字）
+  // 例：FPSD0101-G02EHEE -> FPSD0101-G02
+  const m = s.match(/^([A-Z]{4}\d{4})-([A-Z])(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}${m[3]}`;
+
+  // 相容：如果前面不是 4 英 4 數，也給一個寬鬆版（避免你們不是永遠都 A{4}d{4}）
+  const m2 = s.match(/^([A-Z0-9]{3,10}\d{4})-([A-Z])(\d{2})/);
+  if (m2) return `${m2[1]}-${m2[2]}${m2[3]}`;
+
+  // 最後保底：只要找到 "-Xdd" 就截到那
+  const m3 = s.match(/-([A-Z])(\d{2})/);
+  if (m3) {
+    // 取 '-' 之前全部 + -Xdd
+    const idx = s.indexOf(`-${m3[1]}${m3[2]}`);
+    if (idx >= 0) return s.slice(0, idx) + `-${m3[1]}${m3[2]}`;
+  }
+
+  return s.slice(0, 60);
 }
+
 
 function findLotByPatternAnywhere(s) {
   // 你說的強規則：四個英文 + 四個數字 + "-" + XXX

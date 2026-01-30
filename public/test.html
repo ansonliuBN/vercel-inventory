@@ -2,86 +2,109 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Sharp + Tesseract Debug 測試工具</title>
+    <title>Sharp + Tesseract Debug 測試工具 (自動縮圖版)</title>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
-        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; }
+        .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
         .debug-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 20px; }
-        .debug-card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
-        .debug-card img { width: 100%; border-radius: 4px; background: #eee; }
-        .result-box { margin-top: 20px; padding: 15px; background: #eef; border-radius: 8px; font-size: 1.2rem; font-weight: bold; color: #333; }
-        #loader { display: none; color: #7360f2; font-weight: bold; }
+        .debug-card { border: 1px solid #ddd; padding: 10px; border-radius: 8px; background: #fafafa; }
+        .debug-card img { width: 100%; border-radius: 4px; background: #eee; min-height: 100px; }
+        .result-box { margin-top: 20px; padding: 15px; background: #eef; border-radius: 8px; border: 2px solid #7360f2; }
+        #status { font-weight: bold; color: #7360f2; margin: 10px 0; }
+        .log-box { text-align: left; font-size: 12px; background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-top: 10px; max-height: 100px; overflow-y: auto; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🔍 Sharp + Tesseract 影像辨識 Debug</h2>
-    <p>上傳條碼照片，查看 Sharp 如何「修圖」給 Tesseract 看</p>
+    <h2>🔍 Sharp + Tesseract 自動縮圖測試</h2>
     
-    <input type="file" id="fileInput" accept="image/*" onchange="startTest()">
-    <div id="loader">🔄 影像處理與 OCR 進行中...</div>
+    <input type="file" id="fileInput" accept="image/*" onchange="processAndUpload()">
+    <div id="status">準備就緒</div>
+    <div id="log" class="log-box">等待操作...</div>
 
     <div class="result-box">
-        辨識文字結果：<span id="ocrText">等待上傳...</span>
+        辨識文字結果：<span id="ocrText" style="font-size: 1.4rem;">尚未開始</span>
     </div>
 
     <div class="debug-grid">
-        <div class="debug-card">
-            <b>1. 基本增強 (Base)</b>
-            <img id="imgBase">
-            <p><small>灰階 + 縮放</small></p>
-        </div>
-        <div class="debug-card">
-            <b>2. 二值化 (Threshold)</b>
-            <img id="imgThreshold">
-            <p><small>過濾反光與雜訊</small></p>
-        </div>
-        <div class="debug-card">
-            <b>3. 銳化 (Sharpen)</b>
-            <img id="imgSharp">
-            <p><small>強化文字邊緣</small></p>
-        </div>
+        <div class="debug-card"><b>1. 基本增強</b><img id="imgBase"></div>
+        <div class="debug-card"><b>2. 二值化</b><img id="imgThreshold"></div>
+        <div class="debug-card"><b>3. 銳化</b><img id="imgSharp"></div>
     </div>
 </div>
 
 <script>
-    async function startTest() {
+    const log = (msg) => {
+        const box = document.getElementById('log');
+        box.innerHTML += `> ${msg}<br>`;
+        box.scrollTop = box.scrollHeight;
+        console.log(msg);
+    };
+
+    async function processAndUpload() {
         const file = document.getElementById('fileInput').files[0];
         if (!file) return;
 
-        const loader = document.getElementById('loader');
-        loader.style.display = 'block';
+        const status = document.getElementById('status');
+        status.innerText = "🔄 正在壓縮圖片...";
+        log(`原始檔案大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
 
-        // 轉 Base64
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = async () => {
-            const base64 = reader.result;
+        // 1. 使用 Canvas 自動壓縮圖片
+        const compressedBase64 = await compressImage(file, 1000); // 縮減寬度到 1000px
+        log(`壓縮完成，準備傳送至 API...`);
 
-            try {
-                const res = await fetch('/api/test-ocr', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: base64 })
-                });
+        status.innerText = "📡 正在傳送至 API 並進行 OCR...";
+        
+        try {
+            const res = await fetch('/api/test-ocr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: compressedBase64 })
+            });
 
-                const data = await res.json();
-                
-                // 顯示辨識文字
-                document.getElementById('ocrText').innerText = data.rawText || "未辨識到文字";
-                
-                // 顯示三張 Debug 影像
-                document.getElementById('imgBase').src = "data:image/jpeg;base64," + data.debugImages.base;
-                document.getElementById('imgThreshold').src = "data:image/jpeg;base64," + data.debugImages.threshold;
-                document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
+            if (!res.ok) throw new Error(`API 錯誤: ${res.status}`);
 
-            } catch (err) {
-                alert("錯誤: " + err.message);
-            } finally {
-                loader.style.display = 'none';
-            }
-        };
+            const data = await res.json();
+            log(`API 回傳成功！`);
+
+            document.getElementById('ocrText').innerText = data.rawText || "(空白)";
+            document.getElementById('imgBase').src = "data:image/jpeg;base64," + data.debugImages.base;
+            document.getElementById('imgThreshold').src = "data:image/jpeg;base64," + data.debugImages.threshold;
+            document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
+            
+            status.innerText = "✅ 辨識完成";
+        } catch (err) {
+            log(`❌ 出錯了: ${err.message}`);
+            status.innerText = "❌ 處理失敗";
+        }
+    }
+
+    // --- 核心縮圖 Function ---
+    function compressImage(file, maxWidth) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (e) => {
+                const img = new Image();
+                img.src = e.target.result;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+
+                    // 計算比例
+                    const scale = maxWidth / img.width;
+                    canvas.width = maxWidth;
+                    canvas.height = img.height * scale;
+
+                    // 繪製縮圖
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    
+                    // 轉為較小的 Base64 (品質 0.7)
+                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                };
+            };
+        });
     }
 </script>
 
