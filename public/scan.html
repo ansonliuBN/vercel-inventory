@@ -376,14 +376,14 @@
       setStatus('🟣 start() 觸發了：準備開相機…');
 
       // 修正：相容不同版本的 ZXing 載入方式
-    const ZXing = window.ZXingBrowser || window.ZXing;
-      if (!ZXing) {
-          setBusy(false);
-          setStatus('<b style="color:red">❌ 找不到 ZXing 套件</b><br>請檢查網路或腳本路徑');
-          return;
-      }
+      const ZXing = window.ZXingBrowser || window.ZXing;
+        if (!ZXing) {
+            setBusy(false);
+            setStatus('<b style="color:red">❌ 找不到 ZXing 套件</b><br>請檢查網路或腳本路徑');
+            return;
+        }
 
-    const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = ZXing;
+      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = ZXing;
 
       if (!window.ZXingBrowser) {
         setBusy(false);
@@ -392,7 +392,7 @@
       }
 
       // init zxing reader
-      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXingBrowser;
+      //const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = window.ZXingBrowser;
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.CODE_128,
