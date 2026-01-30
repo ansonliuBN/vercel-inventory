@@ -1,49 +1,74 @@
-<script src="/tesseract/tesseract.min.js"></script>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>OCR Test (Tesseract.js v5 local)</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; padding: 16px; }
+    pre { white-space: pre-wrap; background: #f6f6f6; padding: 12px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h3>OCR Test</h3>
+  <input type="file" id="file" accept="image/*" />
+  <pre id="out">頁面已載入\n</pre>
 
-<script>
-const out = document.getElementById("out");
-const fileInput = document.getElementById("file");
+  <!-- ✅ 用 local 靜態檔，不用 CDN，不用 module -->
+  <script src="/tesseract/tesseract.min.js"></script>
 
-out.textContent += "Tesseract global = " + (typeof Tesseract) + "\n";
+  <script>
+    // ✅ 保證 DOM 都好了才跑（避免 out=null）
+    window.addEventListener("DOMContentLoaded", () => {
+      const out = document.getElementById("out");
+      const fileInput = document.getElementById("file");
 
-let worker = null;
+      out.textContent += "Tesseract global = " + (typeof Tesseract) + "\n";
 
-async function initWorker() {
-  out.textContent += "初始化 worker...\n";
+      let worker = null;
 
-  worker = await Tesseract.createWorker({
-    workerPath: "/tesseract/worker.min.js",
-    corePath: "/tesseract/tesseract-core.wasm",
-    langPath: "/tessdata",
-    logger: m => {
-      // console.log(m); // 有需要再打開
-    }
-  });
+      async function initWorker() {
+        out.textContent += "初始化 worker...\n";
 
-  out.textContent += "載入語言...\n";
-  await worker.loadLanguage("eng");
+        // ✅ v5 寫法：createWorker 會回傳可用 worker（不用 worker.load）
+        worker = await Tesseract.createWorker({
+          workerPath: "/tesseract/worker.min.js",
+          corePath: "/tesseract/tesseract-core.wasm",
+          langPath: "/tessdata",
+        });
 
-  out.textContent += "初始化 OCR 引擎...\n";
-  await worker.initialize("eng");
+        out.textContent += "載入語言...\n";
+        await worker.loadLanguage("eng");
 
-  out.textContent += "OCR worker ready ✅\n";
-}
+        out.textContent += "初始化 OCR 引擎...\n";
+        await worker.initialize("eng");
 
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files[0];
-  if (!file) return;
+        out.textContent += "設定參數...\n";
+        await worker.setParameters({
+          tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
+          tessedit_pageseg_mode: "7",
+        });
 
-  try {
-    if (!worker) await initWorker();
+        out.textContent += "OCR worker ready ✅\n\n";
+      }
 
-    out.textContent += "開始 OCR...\n";
-    const res = await worker.recognize(file);
+      fileInput.addEventListener("change", async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
 
-    out.textContent += "\n--- OCR RESULT ---\n";
-    out.textContent += res.data.text || "(no text)\n";
+        try {
+          if (!worker) await initWorker();
 
-  } catch (e) {
-    out.textContent += "\n❌ ERROR:\n" + e.message;
-  }
-});
-</script>
+          out.textContent += "開始 OCR...\n";
+          const res = await worker.recognize(file);
+
+          out.textContent += "\n--- OCR RESULT ---\n";
+          out.textContent += (res.data.text || "(no text)") + "\n";
+        } catch (e) {
+          out.textContent += "\n❌ ERROR:\n" + (e && e.message ? e.message : String(e)) + "\n";
+        }
+      });
+    });
+  </script>
+</body>
+</html>
