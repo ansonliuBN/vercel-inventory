@@ -127,6 +127,20 @@
     let watchdogTimer = null;
     let rotateTryTimer = null;
     let ocrTimer = null;
+    let stream = null;
+    let decodeControl = null;
+
+    async function openCamera() {
+    // 用戶手勢（按鈕）內呼叫 → 最穩
+    stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play(); // iOS 有時需要明確 play()
+    }
+
 
     function setStatus(html){ statusEl.innerHTML = html; }
     function setBusy(b){ spin.style.display = b ? 'block' : 'none'; }
@@ -279,70 +293,72 @@
     }
 
     async function startScan(){
-      stopAllTimers();
-      setBusy(true);
-      setStatus('🎥 啟動相機中…');
-      scanning = true;
-      btnStart.disabled = true;
-      btnStop.disabled = false;
-      cameraWrap.style.display = 'block';
+    stopAllTimers();
+    setBusy(true);
+    setStatus('🎥 取得相機權限中…');
+    scanning = true;
+    btnStart.disabled = true;
+    btnStop.disabled = false;
+    cameraWrap.style.display = 'block';
 
-      try{
-        await reader.decodeFromVideoDevice(
-          null,
-          video,
-          async (result, err) => {
-            if (!scanning) return;
-
-            if (result) {
-              const text = result.getText();
-              lastSuccessAt = Date.now();
-
-              setBusy(true);
-              setStatus(`✅ 已掃到資料，處理中…<br>${text}`);
-
-              try{
-                const out = await postToBackend({ rawText: text, formatNote: 'LIVE_SCAN' });
-
-                reader.reset();
-                scanning = false;
-                stopAllTimers();
-                setBusy(false);
-                btnStart.disabled = false;
-                btnStop.disabled = true;
-
-                setStatus(
-                  `<b style="color:green">✅ 入庫成功</b><br>` +
-                  `Raw: ${text}<br>` +
-                  `${out.gs1.gtin ? `GTIN(01): ${out.gs1.gtin}<br>` : ''}` +
-                  `${out.gs1.mfg ? `MFG(11): ${out.gs1.mfg}<br>` : ''}` +
-                  `${out.gs1.exp ? `EXP(17): ${out.gs1.exp}<br>` : ''}` +
-                  `${(out.gs1.lot||out.gs1.sn) ? `TAIL(10/21): ${(out.gs1.lot||out.gs1.sn)}<br>` : ''}` +
-                  `${out.gs1.key ? `KEY: ${out.gs1.key}` : ''}`
-                );
-
-                alert('✅ 已入庫！');
-
-              } catch(e){
-                setBusy(false);
-                setStatus(`<b style="color:red">❌ 送出入庫失敗</b><br>${String(e?.message||e)}`);
-              }
-            }
-          }
-        );
-      } catch(e){
+    try{
+        await openCamera();
+    } catch(e){
         setBusy(false);
         scanning = false;
         btnStart.disabled = false;
         btnStop.disabled = true;
-        setStatus(`<b style="color:red">❌ 相機啟動失敗</b><br>請確認 https/localhost 並允許相機權限。`);
+
+        // 把錯誤明確顯示出來，方便你定位（NotAllowedError / NotFoundError / NotReadableError）
+        setStatus(`<b style="color:red">❌ 相機打不開</b><br>${e.name || ''} ${e.message || e}<br>
+        檢查：是否 https/localhost？是否允許相機權限？`);
         return;
-      }
+    }
 
-      lastSuccessAt = Date.now();
-      setBusy(false);
-      setStatus('✅ 相機已啟動，請把條碼放入框內');
+    setBusy(false);
+    setStatus('✅ 相機已啟動，請把條碼放入框內');
+    lastSuccessAt = Date.now();
 
+    // ✅ 用 ZXing 對 video element 持續掃描（比 decodeFromVideoDevice 穩）
+    try{
+        decodeControl = await reader.decodeFromVideoElement(video, async (result, err) => {
+        if (!scanning) return;
+        if (result) {
+            const text = result.getText();
+            lastSuccessAt = Date.now();
+
+            setBusy(true);
+            setStatus(`✅ 已掃到資料，處理中…<br>${text}`);
+
+            try{
+            const out = await postToBackend({ rawText: text, formatNote: 'LIVE_SCAN' });
+
+            // 停止掃描 + 停止相機
+            stopScan();
+
+            setStatus(
+                `<b style="color:green">✅ 入庫成功</b><br>` +
+                `Raw: ${text}<br>` +
+                `${out.gs1.gtin ? `GTIN(01): ${out.gs1.gtin}<br>` : ''}` +
+                `${out.gs1.mfg ? `MFG(11): ${out.gs1.mfg}<br>` : ''}` +
+                `${out.gs1.exp ? `EXP(17): ${out.gs1.exp}<br>` : ''}` +
+                `${(out.gs1.lot||out.gs1.sn) ? `TAIL(10/21): ${(out.gs1.lot||out.gs1.sn)}<br>` : ''}` +
+                `${out.gs1.key ? `KEY: ${out.gs1.key}` : ''}`
+            );
+
+            alert('✅ 已入庫！');
+            } catch(e){
+            setBusy(false);
+            setStatus(`<b style="color:red">❌ 送出入庫失敗</b><br>${String(e?.message||e)}`);
+            }
+        }
+        });
+    } catch(e){
+        setStatus(`<b style="color:red">❌ ZXing 掃描初始化失敗</b><br>${String(e?.message||e)}`);
+        setBusy(false);
+        stopScan();
+        return;
+    }
       // Watchdog：4 秒沒成功 → 旋轉容錯；10 秒後 OCR fallback
       watchdogTimer = setInterval(() => {
         if (!scanning) return;
