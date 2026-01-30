@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>智能辨識入庫 - ZXing優先 + Tesseract OCR fallback（GS1-128/UDI）</title>
+<title>智能辨識入庫 - ZXing-wasm優先 + Tesseract v7 OCR fallback（GS1-128/UDI）</title>
 
-<!-- 避免瀏覽器硬抓 /favicon.ico 造成 404 -->
+<!-- ✅ 避免瀏覽器硬抓 /favicon.ico 造成 404 -->
 <link rel="icon" href="data:,">
 
 <style>
@@ -20,7 +20,7 @@
   .btn-import { background: #27ae60; width: 100%; margin-top: 15px; font-size: 20px; box-shadow: 0 4px 10px rgba(39,174,96,0.3); }
   .btn-back { background: #666; width: auto; font-size: 14px; float: left; padding: 8px 15px; }
 
-  /* ✅ 直向長條（9:16）讓使用者知道方向 */
+  /* ✅ 相機預設直向長條 (9:16)，使用者知道方向 */
   .camera-wrap {
     position: relative;
     width: 100%;
@@ -44,7 +44,7 @@
     left:50%;
     top:52%;
     transform:translate(-50%,-50%);
-    width:90%;
+    width:92%;
     height:18%;
     border:1px solid rgba(255,255,255,0.28);
     border-radius:12px;
@@ -125,10 +125,11 @@
   <canvas id="workCanvas"></canvas>
 </div>
 
-<!-- ✅ ZXing（先解碼條碼，不旋轉） -->
-<script src="https://unpkg.com/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
+<!-- ✅ ZXing-wasm (IIFE) Reader：前端直接用 -->
+<!-- IIFE script 路徑是官方 README 提供的 dist/iife/reader/index.js 形式 -->
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.1/dist/iife/reader/index.js"></script>
 
-<!-- ✅ Tesseract.js v7（失敗才 OCR fallback） -->
+<!-- ✅ Tesseract.js v7（OCR fallback） -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"></script>
 
 <script>
@@ -140,57 +141,10 @@
   let stream = null;
 
   // ============================
-  // v7：Tesseract worker singleton (OCR fallback)
+  // Helpers
   // ============================
-  const TESSERACT_V7_DIST = "https://cdn.jsdelivr.net/npm/tesseract.js@7/dist";
-  const TESSERACT_CORE_V7 = "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0";
-  let ocrWorker = null;
-  let workerReady = false;
+  function setStatus(msg) { document.getElementById('status').innerText = msg; }
 
-  async function ensureTesseractLoaded() {
-    if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
-      throw new Error("Tesseract.js v7 未載入成功：請檢查 Network 是否有 tesseract.min.js 被擋或 404");
-    }
-  }
-
-  async function getOcrWorker() {
-    await ensureTesseractLoaded();
-    if (ocrWorker && workerReady) return ocrWorker;
-
-    document.getElementById('status').innerText = "🧠 初始化 OCR 引擎 (v7 worker)...";
-
-    ocrWorker = await Tesseract.createWorker('eng', 1, {
-      workerPath: `${TESSERACT_V7_DIST}/worker.min.js`,
-      corePath: TESSERACT_CORE_V7
-    });
-
-    workerReady = true;
-    return ocrWorker;
-  }
-
-  window.addEventListener("beforeunload", async () => {
-    try { if (ocrWorker) await ocrWorker.terminate(); } catch (_) {}
-  });
-
-  // ============================
-  // ZXing reader (barcode-first)
-  // ============================
-  let zxingReader = null;
-
-  function ensureZXingLoaded() {
-    if (!window.ZXingBrowser) {
-      throw new Error("ZXingBrowser 未載入成功：請檢查 Network 是否有 zxing-browser.min.js 被擋或 404");
-    }
-    if (!zxingReader) {
-      // 一維多格式 reader（適合 GS1-128 / Code128 等 1D）
-      zxingReader = new ZXingBrowser.BrowserMultiFormatOneDReader();
-    }
-    return zxingReader;
-  }
-
-  // ============================
-  // Base64 helper
-  // ============================
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -200,14 +154,19 @@
     });
   }
 
-  // ============================
-  // Normalize / Extract (GS1 AI)
-  // ============================
   function normalizeText(raw) {
     return (raw || "")
       .replace(/\s+/g, '')
       .replace(/[Il|]/g, '1')
       .replace(/O/g, '0');
+  }
+
+  // ✅ 成功判斷：不再硬吃括號，直接判斷 GS1 核心模式（01+14碼, 17+6碼）
+  function hasGS1Core(text) {
+    const s = normalizeText(text);
+    const has01 = /(?:\(?01\)?)(\d{14})/.test(s) || /01(\d{14})/.test(s);
+    const has17 = /(?:\(?17\)?)(\d{6})/.test(s)  || /17(\d{6})/.test(s);
+    return has01 && has17;
   }
 
   function extractGS1Data(text) {
@@ -226,15 +185,29 @@
     };
   }
 
+  function drawBase64ToWorkCanvas(base64Img) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        workCanvas.width = img.width;
+        workCanvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = base64Img;
+    });
+  }
+
   // ============================
-  // Crop: use big box by default for accuracy
+  // Crop (固定用：大框 + 放大 2.6)
   // ============================
   function getScanBoxRect() {
     const cw = workCanvas.width;
     const ch = workCanvas.height;
 
     const boxW = cw * 0.92;
-    const boxH = ch * 0.22; // UI 18%，但實際 crop 稍微大一點避免切掉字
+    const boxH = ch * 0.22;  // 對齊你「橫向細條」用途（稍微大一點避免切掉字）
 
     const x = Math.max(0, Math.floor((cw - boxW) / 2));
     const y = Math.max(0, Math.floor((ch - boxH) / 2));
@@ -243,13 +216,9 @@
   }
 
   function cropCanvas(rect, scale = 2.6) {
-    const safeW = Math.max(10, Math.floor(rect.w * scale));
-    const safeH = Math.max(10, Math.floor(rect.h * scale));
-
     const c = document.createElement("canvas");
-    c.width = safeW;
-    c.height = safeH;
-
+    c.width = Math.max(10, Math.floor(rect.w * scale));
+    c.height = Math.max(10, Math.floor(rect.h * scale));
     const cctx = c.getContext("2d");
 
     const sx = Math.max(0, Math.min(workCanvas.width - 1, rect.x));
@@ -261,8 +230,12 @@
     return c;
   }
 
+  function canvasToDataURL(canvas, quality = 0.95) {
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
   // ============================
-  // Enhance for OCR
+  // Enhance for OCR (二值化)
   // ============================
   function enhanceForOcr(baseCanvas, contrast=1.6, threshold=170) {
     const c = document.createElement("canvas");
@@ -286,13 +259,86 @@
     return c;
   }
 
-  function canvasToDataURL(canvas, quality = 0.95) {
-    return canvas.toDataURL("image/jpeg", quality);
+  // ============================
+  // ZXing-wasm (barcode-first)
+  // ============================
+  function ensureZXingWasmLoaded() {
+    // IIFE global: ZXingWASM
+    if (!window.ZXingWASM || typeof window.ZXingWASM.readBarcodes !== "function") {
+      throw new Error("zxing-wasm 未載入成功：請檢查 Network 是否有 zxing-wasm iife index.js 被擋或 404");
+    }
+  }
+
+  // ✅ 你要「驅動」：優先吃你自己 host 的 /zxing_reader.wasm
+  // 若你沒放，才 fallback CDN（但建議你放，避免線上 CDN 不穩）
+  async function prepareZXingReaderModuleOnce() {
+    ensureZXingWasmLoaded();
+    if (prepareZXingReaderModuleOnce._done) return;
+    prepareZXingReaderModuleOnce._done = true;
+
+    const ZX = window.ZXingWASM;
+    // 官方建議用 prepareZXingModule + locateFile 控制 wasm 載入 :contentReference[oaicite:1]{index=1}
+    ZX.prepareZXingModule({
+      overrides: {
+        locateFile: (path, prefix) => {
+          if (!path.endsWith(".wasm")) return prefix + path;
+
+          // 1) 你自己 host 的 wasm（你要下載的「驅動」就放這）
+          //    Vercel：放在 /public/zxing_reader.wasm
+          //    其他：放在網站根目錄 /zxing_reader.wasm
+          const selfHosted = "/zxing_reader.wasm";
+
+          // 你如果真的沒放，才用 CDN
+          //（注意：wasm 版本要跟 index.js 的版本一致）:contentReference[oaicite:2]{index=2}
+          const cdnWasm = "https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.1/dist/reader/zxing_reader.wasm";
+
+          // 嘗試 self-host（若 404，ZXing 會再以同一 URL 失敗；所以你務必放檔案）
+          return selfHosted || cdnWasm;
+        }
+      },
+      fireImmediately: true
+    });
+  }
+
+  async function decodeBarcodeWithZXing(cropRawCanvas) {
+    await prepareZXingReaderModuleOnce();
+
+    // readBarcodes 接 ImageData / Blob / File :contentReference[oaicite:3]{index=3}
+    const imgData = cropRawCanvas.getContext("2d").getImageData(0, 0, cropRawCanvas.width, cropRawCanvas.height);
+
+    // 讓它自動判格式（避免格式字串名稱不一致踩雷）
+    const results = await window.ZXingWASM.readBarcodes(imgData, {
+      tryHarder: true,
+      maxNumberOfSymbols: 1
+    });
+
+    if (!results || !results.length) return "";
+
+    // 取第一筆
+    const text = results[0].text || "";
+    return text;
   }
 
   // ============================
-  // Rotate for OCR only (fallback stage)
+  // Tesseract v7 worker (OCR fallback)
   // ============================
+  async function ensureTesseractLoaded() {
+    if (!window.Tesseract || typeof window.Tesseract.createWorker !== "function") {
+      throw new Error("Tesseract.js v7 未載入成功：請檢查 Network 是否有 tesseract.min.js 被擋或 404");
+    }
+  }
+
+  let ocrWorker = null;
+  async function getOcrWorker() {
+    await ensureTesseractLoaded();
+    if (ocrWorker) return ocrWorker;
+
+    setStatus("🧠 初始化 OCR 引擎 (Tesseract v7 worker)...");
+    // 讓 v7 自己決定 core / wasm（你不手動指定 corePath，避免 SIMD 相容性坑）
+    ocrWorker = await Tesseract.createWorker("eng");
+    return ocrWorker;
+  }
+
   function rotateDataUrl(dataUrl, deg) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -315,86 +361,95 @@
     });
   }
 
-  // ============================
-  // OCR (fallback): rotate 0/90/180/270 and stop early
-  // ============================
-  async function ocrBarcodeAutoRotate(inputDataUrl) {
+  function tooSmallForOCR(w, h) {
+    // 你那個錯誤「1x36 vs min width of 3」就是尺寸太誇張
+    // 這邊直接設一個更合理的門檻，太小就不要跑
+    return (w < 60 || h < 24);
+  }
+
+  async function ocrBarcodeAutoRotate(dataUrl) {
     const angles = [0, 90, 180, 270];
     const worker = await getOcrWorker();
 
-    const jobOptions = {
+    const options = {
       tessedit_char_whitelist: "0123456789()ABCDEFGHIJKLMNOPQRSTUVWXYZ-",
       tessedit_pageseg_mode: "7"
     };
 
     for (const deg of angles) {
-      document.getElementById('status').innerText = `🧨 OCR 旋轉強攻：${deg}°...`;
-      const dataUrl = (deg === 0) ? inputDataUrl : await rotateDataUrl(inputDataUrl, deg);
+      setStatus(`🧨 OCR 旋轉強攻：${deg}°...`);
+      const targetUrl = (deg === 0) ? dataUrl : await rotateDataUrl(dataUrl, deg);
 
-      const ret = await worker.recognize(dataUrl, jobOptions);
+      const ret = await worker.recognize(targetUrl, options);
       const text = normalizeText((ret && ret.data && ret.data.text) ? ret.data.text : "");
 
-      if (text.includes("(01)") && text.includes("(17)")) {
-        return text;
-      }
+      // ✅ 成功判斷：regex（括號有沒有都算）
+      if (hasGS1Core(text)) return text;
     }
     return "";
   }
 
   // ============================
-  // ✅ FLOW A: Barcode decode first, then OCR fallback
+  // ✅ FLOW A: ZXing-wasm decode first, then OCR fallback
   // ============================
   async function analyzeFromWorkCanvas() {
-    loader.style.display = 'block';
+    loader.style.display = "block";
 
     if (workCanvas.width < 50 || workCanvas.height < 50) {
       throw new Error(`影像載入失敗或尺寸過小：${workCanvas.width}x${workCanvas.height}`);
     }
 
-    // 1) Crop raw (color) for ZXing decode
-    document.getElementById('status').innerText = "📡 先嘗試解碼條碼（ZXing，不旋轉）...";
     const rect = getScanBoxRect();
     const cropRaw = cropCanvas(rect, 2.6);
 
+    // 1) ZXing-wasm: decode barcode (no rotate)
+    setStatus("📡 先嘗試解碼條碼（zxing-wasm，不旋轉）...");
     let zxingText = "";
     try {
-      const reader = ensureZXingLoaded();
-      const result = await reader.decodeFromCanvas(cropRaw);
-      zxingText = (result && (result.getText ? result.getText() : result.text)) || "";
+      zxingText = await decodeBarcodeWithZXing(cropRaw);
     } catch (e) {
       zxingText = "";
     }
 
-    // Try parse GS1 from ZXing
     let data = extractGS1Data(zxingText);
-
-    // 2) If ZXing decode succeeds with GTIN+EXP => done
     if (data.gtin && data.exp) {
-      document.getElementById('status').innerText = "✅ ZXing 解碼成功，請複核資料。";
-      return { data, source: "ZXING", raw: zxingText };
+      return { data, source: "ZXING_WASM", raw: zxingText };
     }
 
-    // 3) Else OCR fallback (enhanced + rotate)
-    document.getElementById('status').innerText = "⚠️ ZXing 未取得完整(01)/(17)，改用 OCR 強攻...";
-    const enhanced = enhanceForOcr(cropRaw, 1.6, 170);
+    // 2) OCR fallback: raw crop first, then enhanced crop (both rotate)
+    setStatus("⚠️ 條碼解碼未取得完整(01)/(17)，改用 OCR fallback...");
+    const rawUrl = canvasToDataURL(cropRaw, 0.95);
 
-    if (enhanced.width < 50 || enhanced.height < 20) {
-      // 太小就直接用整張做 OCR（保底）
+    // 太小就不要跑，直接改用整張（保底）
+    if (tooSmallForOCR(cropRaw.width, cropRaw.height)) {
+      setStatus("⚠️ 切圖太小，改用整張圖 OCR fallback...");
       const fullUrl = workCanvas.toDataURL("image/jpeg", 0.92);
-      const foundText = await ocrBarcodeAutoRotate(fullUrl);
-      data = extractGS1Data(foundText);
-      return { data, source: "OCR_FULL", raw: foundText };
+      const t = await ocrBarcodeAutoRotate(fullUrl);
+      data = extractGS1Data(t);
+      return { data, source: "OCR_FULL", raw: t };
     }
 
-    const ocrTarget = canvasToDataURL(enhanced, 0.95);
-    const foundText = await ocrBarcodeAutoRotate(ocrTarget);
-    data = extractGS1Data(foundText);
-    return { data, source: "OCR_CROP", raw: foundText };
+    // 2-1) OCR on raw crop
+    const t1 = await ocrBarcodeAutoRotate(rawUrl);
+    data = extractGS1Data(t1);
+    if (data.gtin && data.exp) return { data, source: "OCR_CROP_RAW", raw: t1 };
+
+    // 2-2) OCR on enhanced crop
+    const enhanced = enhanceForOcr(cropRaw, 1.6, 170);
+    if (tooSmallForOCR(enhanced.width, enhanced.height)) {
+      // enhanced 反而吃掉尺寸就別跑
+      return { data, source: "OCR_CROP_RAW", raw: t1 };
+    }
+
+    const enhancedUrl = canvasToDataURL(enhanced, 0.95);
+    const t2 = await ocrBarcodeAutoRotate(enhancedUrl);
+    data = extractGS1Data(t2);
+    return { data, source: "OCR_CROP_ENH", raw: t2 };
   }
 
   async function triggerAnalysisFromBase64(base64Img) {
     loader.style.display = 'block';
-    document.getElementById('status').innerText = "⌛ 正在準備分析...";
+    setStatus("⌛ 正在準備分析...");
 
     await drawBase64ToWorkCanvas(base64Img);
 
@@ -409,23 +464,11 @@
     loader.style.display = 'none';
     document.getElementById('reviewArea').style.display = 'block';
 
-    document.getElementById('status').innerText =
+    setStatus(
       (data.gtin && data.exp)
         ? `辨識完成（來源：${result.source}），請複核資料。`
-        : `⚠️ 未抓到完整 (01)/(17)，建議重拍或人工修正。（來源：${result.source}）`;
-  }
-
-  function drawBase64ToWorkCanvas(base64Img) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        workCanvas.width = img.width;
-        workCanvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-        resolve();
-      };
-      img.src = base64Img;
-    });
+        : `⚠️ 未抓到完整 GTIN(01)+EXP(17)，建議重拍或人工修正。（來源：${result.source}）`
+    );
   }
 
   // ============================
@@ -442,8 +485,7 @@
       document.getElementById('modeSelect').style.display = 'none';
       document.getElementById('btnSnap').style.display = 'block';
 
-      document.getElementById('status').innerText =
-        "請把條碼『橫放』在中間細長框內（避免反光、靠近一點）。";
+      setStatus("請把條碼『橫放』在中間細長框內（避免反光、靠近一點）。");
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
     }
