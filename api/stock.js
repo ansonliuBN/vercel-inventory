@@ -15,8 +15,8 @@ export default async function handler(req, res) {
       const { data, error } = await supabase.from('transactions').insert([{
         item_uuid,
         from_loc: from_loc || 'FACTORY',
-        to_loc: to_loc || 'MAIN',
-        operator_name: operator || 'SYSTEM',
+        to_loc: to_loc,
+        operator_name: operator,
         expiry_date,
         product_code
       }]);

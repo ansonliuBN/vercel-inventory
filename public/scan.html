@@ -410,7 +410,7 @@
       quantity: qty,
       from_loc: 'FACTORY',
       to_loc: '業務倉庫',
-      operator: 'MANUAL_REVIEW'
+      operator: localStorage.getItem('user_email') || '未知用戶'
     };
 
     loader.style.display = 'block';
