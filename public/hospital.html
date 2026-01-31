@@ -1,58 +1,54 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 15px; background: #f4f7f9; }
-        .flex-container { display: flex; gap: 20px; flex-wrap: wrap; }
+        body { font-family: sans-serif; padding: 15px; background: #f4f7f9; margin: 0; }
+        .flex-grid { display: flex; gap: 20px; flex-wrap: wrap; }
         .panel { background: white; padding: 20px; border-radius: 12px; flex: 1; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .loc-box { background: #e7f3ff; padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #b3d7ff; }
+        .loc-tag { background: #e7f3ff; padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #b3d7ff; }
         .stock-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
-        .stock-row b { color: #333; }
-        input[type="number"] { width: 60px; padding: 5px; text-align: center; }
-        input[type="text"] { width: 80px; padding: 5px; }
-        button.save { background: #007bff; color: white; border: none; padding: 10px; border-radius: 5px; width: 100%; cursor: pointer; }
+        input[type="number"] { width: 50px; text-align: center; }
+        input[type="text"] { width: 100px; }
+        .btn-blue { background: #007bff; color: white; border: none; padding: 10px; border-radius: 6px; width: 100%; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div class="flex-container">
-        <div class="panel">
-            <h3>📍 位置與提醒設定</h3>
-            <div class="loc-box">
-                <label>目前偵測：</label> <b id="cur-loc">定位中...</b>
-                <select id="loc-sel" style="width:100%; margin-top:5px;" onchange="sync()"></select>
-            </div>
-            <label>📝 撥補/領用提醒：</label>
-            <textarea id="note-in" style="width:100%; height:120px; margin-top:10px; padding:10px; box-sizing:border-box;" placeholder="輸入要提醒業務的話..."></textarea>
-            <button class="save" onclick="saveNote()" style="margin-top:10px;">儲存備註</button>
+    <div class="flex-grid">
+        <div class="panel" style="max-width: 400px;">
+            <h3>📍 位置與提醒</h3>
+            <div class="loc-tag">偵測位置：<b id="cur-loc" style="color:#007bff;">定位中...</b></div>
+            <select id="loc-sel" style="width:100%; padding:8px;" onchange="sync()"></select>
+            <textarea id="note-in" style="width:100%; height:100px; margin-top:15px; padding:10px; box-sizing:border-box;" placeholder="寫下要提醒業務的話..."></textarea>
+            <button class="btn-blue" onclick="saveNote()" style="margin-top:10px;">儲存備註</button>
         </div>
 
         <div class="panel">
-            <h3>⚽ 醫院固定庫存 (內建品)</h3>
-            <div id="fix-list">
-                </div>
+            <h3>⚽ 醫院固定庫存</h3>
+            <div id="fix-list"></div>
             <hr>
-            <h4>➕ 新增其他耗材</h4>
+            <p style="font-size:13px; color:#999;">新增自定義項：</p>
             <div style="display:flex; gap:5px;">
-                <input type="text" id="new-name" placeholder="品名" style="flex:2;">
-                <input type="text" id="new-unit" placeholder="單位(個/包)" style="flex:1;">
-                <button onclick="addFixItem()">新增</button>
+                <input type="text" id="new-name" placeholder="品名">
+                <input type="text" id="new-unit" placeholder="單位" value="個" style="width:50px;">
+                <button onclick="addOther()">新增</button>
             </div>
         </div>
     </div>
 
 <script>
-    const builtIn = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
-    
+    const builtInItems = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
+
     async function init() {
         const { data: locs } = await _supabase.from('locations').select('*');
         const sel = document.getElementById('loc-sel');
         locs.forEach(l => sel.add(new Option(l.name, l.name)));
 
+        // 使用共享定位功能
         navigator.geolocation.getCurrentPosition(async (pos) => {
-            const nearest = await findNearest(pos.coords.latitude, pos.coords.longitude, locs);
-            if(nearest) {
+            const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+            if (nearest) {
                 sel.value = nearest.name;
                 sync();
             }
@@ -62,12 +58,8 @@
     async function sync() {
         const loc = document.getElementById('loc-sel').value;
         document.getElementById('cur-loc').innerText = loc;
-        
-        // 抓備註
         const { data: lData } = await _supabase.from('locations').select('note').eq('name', loc).single();
         document.getElementById('note-in').value = lData?.note || '';
-
-        // 抓固定庫存
         loadStock(loc);
     }
 
@@ -75,55 +67,43 @@
         const { data } = await _supabase.from('hospital_stock').select('*').eq('location_name', loc);
         const container = document.getElementById('fix-list');
         
-        // 內建品邏輯：不管資料庫有沒有，這兩個都要出現
-        let html = builtIn.map(name => {
-            const dbItem = data?.find(d => d.item_name === name);
-            return renderRow(name, dbItem?.quantity || 0, dbItem?.unit || '個', dbItem?.id, dbItem?.updated_at);
+        let html = builtInItems.map(name => {
+            const db = data?.find(d => d.item_name === name);
+            return renderRow(name, db?.quantity || 0, db?.unit || '個', db?.updated_at);
         }).join('');
 
-        // 加上其他自定義品項
-        const otherItems = data?.filter(d => !builtIn.includes(d.item_name));
-        html += otherItems.map(d => renderRow(d.item_name, d.quantity, d.unit, d.id, d.updated_at)).join('');
-        
+        const others = data?.filter(d => !builtInItems.includes(d.item_name)) || [];
+        html += others.map(d => renderRow(d.item_name, d.quantity, d.unit, d.updated_at)).join('');
         container.innerHTML = html;
     }
 
-    function renderRow(name, qty, unit, id, time) {
+    function renderRow(name, qty, unit, time) {
         return `
             <div class="stock-row">
-                <div>
-                    <b>${name}</b><br>
-                    <small style="color:#999">${time ? new Date(time).toLocaleString() : '尚未更新'}</small>
-                </div>
+                <div><b>${name}</b><br><small style="color:#bbb">${time ? new Date(time).toLocaleString() : '未更新'}</small></div>
                 <div>
                     <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}')"> ${unit}
                 </div>
-            </div>
-        `;
+            </div>`;
     }
 
     async function updateQty(name, qty, unit) {
         const loc = document.getElementById('loc-sel').value;
-        // 使用 upsert: 有則更新，無則新增
-        const { error } = await _supabase.from('hospital_stock').upsert({
-            location_name: loc,
-            item_name: name,
-            quantity: qty,
-            unit: unit,
-            updated_at: new Date()
+        await _supabase.from('hospital_stock').upsert({
+            location_name: loc, item_name: name, quantity: qty, unit: unit, updated_at: new Date()
         }, { onConflict: 'location_name, item_name' });
-        
-        if(!error) loadStock(loc);
+        loadStock(loc);
+    }
+
+    async function addOther() {
+        const n = document.getElementById('new-name').value;
+        const u = document.getElementById('new-unit').value;
+        if(n) await updateQty(n, 0, u);
     }
 
     async function saveNote() {
-        const loc = document.getElementById('loc-sel').value;
-        await _supabase.from('locations').update({ note: document.getElementById('note-in').value }).eq('name', loc);
-        alert("備註已儲存");
-    }
-
-    async function findNearest(lat, lng, locs) {
-        return locs.map(l => ({ ...l, d: Math.pow(l.lat-lat,2)+Math.pow(l.lng-lng,2) })).sort((a,b)=>a.d-b.d)[0];
+        await _supabase.from('locations').update({ note: document.getElementById('note-in').value }).eq('name', document.getElementById('loc-sel').value);
+        alert("儲存成功");
     }
     init();
 </script>

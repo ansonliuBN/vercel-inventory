@@ -1,28 +1,23 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 15px; background: #fff; }
-        .card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; }
-        .item-card { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; gap: 10px; }
-        .btn-go { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 8px; font-weight: bold; margin-top: 20px; }
+        body { font-family: sans-serif; padding: 20px; }
+        .item-box { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+        .btn-transfer { width: 100%; padding: 15px; background: #28a745; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>🚚 撥補發貨 (從 業務倉庫 出貨)</h3>
-        
-        <div style="background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-            <label>📍 目標撥補地點：</label>
-            <select id="to-loc" style="width:100%; padding:8px;"></select>
-        </div>
-
-        <div id="warehouse-list">載入業務倉庫物料中...</div>
-        
-        <button class="btn-go" onclick="submitTransfer()">確認撥補</button>
+    <h3>🚚 撥補發貨 (從 業務倉庫)</h3>
+    <div style="background:#f8f9fa; padding:15px; border-radius:10px; margin-bottom:20px;">
+        <label>🎯 撥補目的地：</label>
+        <select id="to-loc" style="width:100%; padding:10px;"></select>
     </div>
+
+    <div id="warehouse-list">讀取業務倉庫庫存中...</div>
+    <button class="btn-transfer" onclick="doTransfer()">確認撥補</button>
 
 <script>
     async function init() {
@@ -30,53 +25,46 @@
         const sel = document.getElementById('to-loc');
         locs.forEach(l => sel.add(new Option(l.name, l.name)));
 
-        // 定位目前醫院
+        // 同步定位目的地
         navigator.geolocation.getCurrentPosition(async (pos) => {
-            const nearest = locs.map(l => ({ ...l, d: Math.pow(l.lat-pos.coords.latitude,2)+Math.pow(l.lng-pos.coords.longitude,2) })).sort((a,b)=>a.d-b.d)[0];
-            if(nearest) sel.value = nearest.name;
+            const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+            if (nearest) sel.value = nearest.name;
         });
 
-        loadWarehouse();
+        loadList();
     }
 
-    async function loadWarehouse() {
-        // 只抓 業務倉庫 的東西
-        const { data } = await _supabase.from('inventory_summary').select('*').eq('location', '業務倉庫').gt('current_stock', 0);
-        
+    async function loadList() {
+        const { data } = await _supabase.from('inventory_summary').select('*').eq('location', '業務倉庫');
         document.getElementById('warehouse-list').innerHTML = data.map(i => `
-            <div class="item-card">
-                <input type="checkbox" name="move" value="${i.item_uuid}" data-code="${i.product_code}" style="zoom:1.5">
-                <div style="flex:1;">
-                    <b>${i.item_uuid}</b><br>
-                    <small>在庫：${i.current_stock} | 效期：${i.expiry_date}</small>
+            <div class="item-box">
+                <input type="checkbox" name="move" value="${i.item_uuid}" style="zoom:1.3">
+                <div style="flex:1; margin-left:10px;">
+                    <b>${i.item_uuid}</b><br><small>在庫: ${i.current_stock}</small>
                 </div>
-                <input type="number" name="qty-${i.item_uuid}" value="1" min="1" max="${i.current_stock}" style="width:50px;">
+                數量: <input type="number" id="qty-${i.item_uuid}" value="1" style="width:40px;">
             </div>
         `).join('') || "業務倉庫目前沒貨";
     }
 
-    async function submitTransfer() {
+    async function doTransfer() {
         const checked = document.querySelectorAll('input[name="move"]:checked');
         const target = document.getElementById('to-loc').value;
-        if(checked.length === 0) return alert("請勾選要撥補的物料");
+        if(checked.length === 0) return alert("請勾選物料");
 
         for(let el of checked) {
-            const uuid = el.value;
-            const qty = document.getElementsByName('qty-'+uuid)[0].value;
-            
+            const qty = document.getElementById('qty-' + el.value).value;
             await fetch('/api/stock', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
-                    item_uuid: uuid,
-                    from_loc: '業務倉庫',
-                    to_loc: target,
-                    quantity: parseInt(qty),
-                    operator: localStorage.getItem('user_email')
+                    item_uuid: el.value, from_loc: '業務倉庫', to_loc: target,
+                    quantity: parseInt(qty), operator: localStorage.getItem('user_email')
                 })
             });
         }
-        alert("撥補完成！"); location.reload();
+        alert("撥補成功！");
+        location.reload();
     }
     init();
 </script>
