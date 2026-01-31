@@ -54,7 +54,7 @@
             height: calc(100vh - var(--nav-h));
 
             /* ✅ 用 max-width 控制上限，用 width 控制流體 */
-            max-width: 1500px;
+            max-width: 1200px;
             width: calc(100vw - 48px);
 
             margin: var(--nav-h) auto 0;  /* 上面留 nav 的高度，左右置中 */
@@ -91,10 +91,10 @@
         <div class="burger" onclick="toggleMenu()">☰</div>
 
         <div class="nav-links" id="menu">
-            <button id="btn-list" class="nav-btn" onclick="go('list.html', this)">📦 庫存總表</button>
             <button id="btn-scan" class="nav-btn" onclick="go('scan.html', this)">✨ 新貨入庫</button>
+            <button id="btn-list" class="nav-btn" onclick="go('list.html', this)">📦 庫存總表</button>
             <button id="btn-transfer" class="nav-btn" onclick="go('transfer.html', this)">🚚 撥補發貨</button>
-            <button id="btn-consume" class="nav-btn" onclick="go('consume.html', this)">🏥 醫院領用</button>
+            <button id="btn-consume" class="nav-btn" onclick="go('consume.html', this)">🏥 耗材使用</button>
             <button id="btn-hospital" class="nav-btn" onclick="go('hospital.html', this)">🛠️ 醫院管理</button>
         </div>
 

@@ -5,42 +5,54 @@
     <script src="supabase-config.js"></script>
     <style>
         body { font-family: sans-serif; padding: 20px; background: white; margin: 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
-        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-        .urgent { color: red; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; } /* 鎖定比例佈局 */
+        
+        th { background: #f8f9fa; padding: 12px 8px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
+        td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: top; word-break: break-all; }
+
+        /* --- 比例鎖定 --- */
+        .col-loc { width: 12%; }   /* 位置：小 */
+        .col-name { width: 25%; }  /* 產品：中 */
+        .col-exp { width: 13%; }   /* 效期：小 */
+        .col-qty { width: 8%; text-align: center; } /* 數量：最小 */
         .col-note { 
-            width: 42%; 
-            white-space: pre-wrap; /* 💡 關鍵：這行能讓備註裡的換行生效 */
-            word-wrap: break-word;
-            font-size: 13px;
-            color: #666;
+            width: 42%;            /* 備註：最大 */
+            white-space: pre-wrap; /* 💡 支援 Enter 斷行 */
+            color: #555;
             line-height: 1.5;
         }
+
+        .urgent { color: red; font-weight: bold; }
+        .row-biz { background: #f0f7ff; } /* 業務倉庫高亮 */
     </style>
 </head>
 <body>
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-        <h2>📦 庫存實時總表</h2>
-        <button onclick="load()">🔄 刷新</button>
+        <h2 style="margin:0;">📦 庫存實時總表</h2>
+        <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 5px; border: 1px solid #ddd;">🔄 刷新數據</button>
     </div>
 
     <table>
         <thead>
-            <tr><th>位置</th><th>產品/序號</th><th>效期</th><th>數量</th><th>備註</th></tr>
+            <tr>
+                <th class="col-loc">位置</th>
+                <th class="col-name">產品 / 序號</th>
+                <th class="col-exp">效期</th>
+                <th class="col-qty">數量</th>
+                <th class="col-note">備註</th>
+            </tr>
         </thead>
         <tbody id="list">
-            <tr><td colspan="5" style="text-align:center;">載入中...</td></tr>
+            <tr><td colspan="5" style="text-align:center; padding:30px;">載入中...</td></tr>
         </tbody>
     </table>
 
     <script>
-
         async function load() {
             const { data, error } = await _supabase.from('inventory_summary').select('*');
             if (error) return console.error(error);
 
-            // 排序：業務倉庫第一 > 近期活躍 > 效期
+            // 排序邏輯
             data.sort((a, b) => {
                 if (a.location === '業務倉庫') return -1;
                 if (b.location === '業務倉庫') return 1;
@@ -52,28 +64,25 @@
             limitDate.setMonth(limitDate.getMonth() + 3);
 
             document.getElementById('list').innerHTML = data.map(i => {
-                const prefix = i.product_code ? i.product_code.split('-')[0] : '';
-                const friendlyName = productNames[prefix] || i.product_code || '未知產品';
                 const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
-
-                // 💡 這裡變簡單了，直接拿資料庫傳回來的名稱，沒有的話顯示產品代碼
+                // 💡 直接使用資料庫抓回來的 friendly_name
                 const displayName = i.friendly_name || i.product_code || '未知產品';
 
                 return `
-                    <tr>
+                    <tr class="${i.location === '業務倉庫' ? 'row-biz' : ''}">
                         <td><b>${i.location}</b></td>
                         <td>
-                            <div style="font-weight:bold;">${friendlyName}</div>
-                            <div style="font-size:11px; color:#999;">${i.item_uuid}</div>
+                            <div style="font-weight:bold; color:#333;">${displayName}</div>
+                            <div style="font-size:11px; color:#999; margin-top:2px;">${i.item_uuid}</div>
                         </td>
                         <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
-                        <td style="text-align:center;">${i.current_stock}</td>
-                        <td style="font-size:12px; color:#666;">${i.location_note || '-'}</td>
+                        <td style="text-align:center;"><b>${i.current_stock}</b></td>
+                        <td class="col-note">${i.location_note || '-'}</td>
                     </tr>
                 `;
             }).join('');
         }
-        load(); // 頁面載入自動執行
+        load();
     </script>
 </body>
 </html>
