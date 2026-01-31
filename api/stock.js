@@ -17,9 +17,9 @@ export default async function handler(req, res) {
         from_loc: from_loc || 'FACTORY',
         to_loc: to_loc,
         operator_name: operator,
-        expiry_date,
-        product_code,
-        quantity: quantity
+        expiry_date: expiry_date,
+        product_code: product_code,
+        quantity: parseInt(quantity)
       }]);
 
       if (error) throw error;

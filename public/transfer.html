@@ -64,26 +64,27 @@
     }
 
     // 2. 讀取該來源地點目前的庫存
+    // 修改 transfer.html 裡的渲染邏輯
     async function loadFromInventory() {
         const loc = fromSel.value;
         const { data } = await _supabase.from('inventory_summary').select('*').eq('location', loc);
         
-        const listDiv = document.getElementById('inventory-list');
-        if (!data || data.length === 0) {
-            listDiv.innerHTML = `<p style="color:#999; text-align:center;">此位置目前無庫存</p>`;
-            return;
-        }
-
-        listDiv.innerHTML = data.map(i => `
+        document.getElementById('inventory-list').innerHTML = data.map(i => `
             <div class="item-row">
-                <input type="checkbox" name="move" value="${i.item_uuid}" style="zoom:1.5">
+                <input type="checkbox" name="move" value="${i.item_uuid}" data-code="${i.product_code}" data-exp="${i.expiry_date || ''}" style="zoom:1.5">
                 <div style="flex:1;">
-                    <b>${i.item_uuid}</b><br>
-                    <small>型號: ${i.product_code || '-'} | 在庫: ${i.current_stock}</small>
+                    <b>${i.friendly_name || i.product_code}</b><br>
+                    <small>產品: ${i.friendly_name || i.product_code} | 在庫: ${i.total_stock}</small>
                 </div>
-                數量: <input type="number" id="qty-${i.item_uuid}" value="1" min="1" max="${i.current_stock}" style="width:50px; padding:5px;">
+                數量: <input type="number" 
+                            id="qty-${i.item_uuid}" 
+                            value="1" 
+                            min="1" 
+                            max="${i.total_stock}" 
+                            oninput="if(value > ${i.total_stock}) value = ${i.total_stock}; if(value < 1) value = 1;"
+                            style="width:60px; padding:5px; border:1px solid #ccc; border-radius:4px;">
             </div>
-        `).join('');
+        `).join('') || "此地點目前沒貨";
     }
 
     // 3. 提交撥補
@@ -97,7 +98,26 @@
 
         for (let el of checked) {
             const uuid = el.value;
+            const inputField = document.getElementById('qty-' + uuid);
             const qty = document.getElementById('qty-' + uuid).value;
+            const maxQty = parseInt(inputField.max);
+            // 💡 關鍵：從 checkbox 身上抓回原本的質
+            const originalCode = el.dataset.code; 
+            const originalExp = el.dataset.exp;
+
+            if (qty > maxQty) {
+                alert(`【錯誤】${uuid} 的撥補數量 (${qty}) 超過了在庫數量 (${maxQty})！`);
+                inputField.value = maxQty; // 幫他改回正確的
+                return; // 終止發送
+            }
+            
+            if (qty < 1 || isNaN(qty)) {
+                alert(`【錯誤】${uuid} 的數量不正確！`);
+                return;
+            }
+
+            // 通過檢查才開始發送 API
+            if (!confirm(`確定要從 ${source} 撥補 ${checked.length} 項物料到 ${target} 嗎？`)) return;
             
             await fetch('/api/stock', {
                 method: 'POST',
@@ -108,8 +128,8 @@
                     to_loc: target,
                     quantity: parseInt(qty),
                     operator: localStorage.getItem('user_email'),
-                    product_code: el.dataset.code, // 從標籤抓回代碼
-                    expiry_date: el.dataset.exp    // 從標籤抓回效期
+                    product_code: originalCode, // 從標籤抓回代碼
+                    expiry_date: originalExp    // 從標籤抓回效期
                 })
             });
         }

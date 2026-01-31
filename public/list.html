@@ -4,85 +4,122 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: white; margin: 0; }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; } /* 鎖定比例佈局 */
-        
-        th { background: #f8f9fa; padding: 12px 8px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
-        td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: top; word-break: break-all; }
+        body { font-family: -apple-system, sans-serif; padding: 20px; background: white; margin: 0; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: top; }
 
-        /* --- 比例鎖定 --- */
-        .col-loc { width: 12%; }   /* 位置：小 */
-        .col-name { width: 25%; }  /* 產品：中 */
-        .col-exp { width: 13%; }   /* 效期：小 */
-        .col-qty { width: 8%; text-align: center; } /* 數量：最小 */
-        .col-note { 
-            width: 42%;            /* 備註：最大 */
-            white-space: pre-wrap; /* 💡 支援 Enter 斷行 */
-            color: #555;
-            line-height: 1.5;
-        }
+        /* 比例鎖定 */
+        .col-loc { width: 15%; }
+        .col-name { width: 30%; }
+        .col-exp { width: 15%; }
+        .col-qty { width: 10%; text-align: center; }
+        .col-note { width: 30%; white-space: pre-wrap; word-wrap: break-word; color: #666; line-height: 1.5; }
 
-        .urgent { color: red; font-weight: bold; }
-        .row-biz { background: #f0f7ff; } /* 業務倉庫高亮 */
+        .urgent { color: #d9534f; font-weight: bold; }
+        .plus-btn { color: #007bff; font-weight: bold; cursor: pointer; margin-left: 5px; font-size: 16px; }
+
+        /* 彈出視窗樣式 */
+        #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
+        .modal { background: white; padding: 25px; border-radius: 15px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative; }
+        .modal h3 { margin-top: 0; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .close-btn { position: absolute; top: 15px; right: 15px; font-size: 20px; cursor: pointer; color: #999; }
+        .stock-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
     </style>
 </head>
 <body>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-        <h2 style="margin:0;">📦 庫存實時總表</h2>
-        <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 5px; border: 1px solid #ddd;">🔄 刷新數據</button>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+    <h2 style="margin:0;">📦 庫存實時總表 (整合版)</h2>
+    <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 6px; border: 1px solid #ddd;">🔄 刷新</button>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th class="col-loc">位置</th>
+            <th class="col-name">產品名稱</th>
+            <th class="col-exp">效期</th>
+            <th class="col-qty">數量</th>
+            <th class="col-note">備註</th>
+        </tr>
+    </thead>
+    <tbody id="list"></tbody>
+</table>
+
+<div id="modal-overlay" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+        <span class="close-btn" onclick="closeModal()">×</span>
+        <h3 id="modal-title">醫院固定庫存</h3>
+        <div id="modal-body">載入中...</div>
     </div>
+</div>
 
-    <table>
-        <thead>
-            <tr>
-                <th class="col-loc">位置</th>
-                <th class="col-name">產品 / 序號</th>
-                <th class="col-exp">效期</th>
-                <th class="col-qty">數量</th>
-                <th class="col-note">備註</th>
-            </tr>
-        </thead>
-        <tbody id="list">
-            <tr><td colspan="5" style="text-align:center; padding:30px;">載入中...</td></tr>
-        </tbody>
-    </table>
+<script>
+    async function load() {
+        const { data, error } = await _supabase.from('inventory_summary').select('*');
+        if (error) return;
 
-    <script>
-        async function load() {
-            const { data, error } = await _supabase.from('inventory_summary').select('*');
-            if (error) return console.error(error);
+        // 排序：業務倉庫置頂
+        data.sort((a,b) => (a.location === '業務倉庫' ? -1 : 1));
 
-            // 排序邏輯
-            data.sort((a, b) => {
-                if (a.location === '業務倉庫') return -1;
-                if (b.location === '業務倉庫') return 1;
-                if (a.last_active !== b.last_active) return new Date(b.last_active) - new Date(a.last_active);
-                return new Date(a.expiry_date) - new Date(b.expiry_date);
-            });
+        const limitDate = new Date();
+        limitDate.setMonth(limitDate.getMonth() + 3);
 
-            const limitDate = new Date();
-            limitDate.setMonth(limitDate.getMonth() + 3);
+        document.getElementById('list').innerHTML = data.map(i => {
+            const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+            const displayName = i.friendly_name || i.product_code || '未知產品';
 
-            document.getElementById('list').innerHTML = data.map(i => {
-                const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
-                // 💡 直接使用資料庫抓回來的 friendly_name
-                const displayName = i.friendly_name || i.product_code || '未知產品';
+            return `
+                <tr>
+                    <td><b>${i.location}</b></td>
+                    <td>
+                        <div style="font-weight:bold;">${displayName}</div>
+                        <div style="font-size:11px; color:#999;">${i.product_code}</div>
+                    </td>
+                    <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
+                    <td style="text-align:center;"><b>${i.total_stock}</b></td>
+                    <td class="col-note">
+                        ${i.location_note || '-'}
+                        <span class="plus-btn" onclick="openModal('${i.location}')" title="查看固定庫存">[+]</span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
 
-                return `
-                    <tr class="${i.location === '業務倉庫' ? 'row-biz' : ''}">
-                        <td><b>${i.location}</b></td>
-                        <td>
-                            <div style="font-weight:bold; color:#333;">${displayName}</div>
-                            <div style="font-size:11px; color:#999; margin-top:2px;">${i.item_uuid}</div>
-                        </td>
-                        <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
-                        <td style="text-align:center;"><b>${i.current_stock}</b></td>
-                        <td class="col-note">${i.location_note || '-'}</td>
-                    </tr>
-                `;
-            }).join('');
+    async function openModal(locName) {
+        if (locName === '業務倉庫' || locName === 'CONSUMED') {
+            alert("此地點無固定庫存資料");
+            return;
         }
-        load();
-    </script>
+        
+        document.getElementById('modal-overlay').style.display = 'flex';
+        document.getElementById('modal-title').innerText = `🏥 ${locName} 固定庫存`;
+        document.getElementById('modal-body').innerHTML = '讀取中...';
+
+        const { data, error } = await _supabase.from('hospital_stock')
+            .select('*')
+            .eq('location_name', locName);
+
+        if (!data || data.length === 0) {
+            document.getElementById('modal-body').innerHTML = '<p style="color:#999; text-align:center;">目前無固定庫存紀錄</p>';
+            return;
+        }
+
+        document.getElementById('modal-body').innerHTML = data.map(d => `
+            <div class="stock-item">
+                <span><b>${d.item_name}</b></span>
+                <span>${d.quantity} ${d.unit}</span>
+            </div>
+        `).join('');
+    }
+
+    function closeModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+    }
+
+    load();
+</script>
 </body>
 </html>
