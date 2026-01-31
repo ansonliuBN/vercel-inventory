@@ -105,18 +105,71 @@
 
         function go(url, btn) {
             const iframe = document.getElementById('sub-page');
-            if (iframe.src.includes(url)) return; // 如果已經在該頁，就不重複跳轉
-            
+            // 存起來：下次刷新也回到使用者最後一頁
+            sessionStorage.setItem('lastPage', url);
+
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
             iframe.src = url;
-            
+
             if (window.innerWidth <= 950) document.getElementById('menu').classList.remove('active');
+
         }
 
-        async function login() { await _supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } }); }
-        async function logout() { await _supabase.auth.signOut(); localStorage.clear(); location.reload(); }
+        function showLoggedIn(session) {
+            document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('app-bar').style.display = 'flex';
+            document.getElementById('app-content').style.display = 'block';
+            document.getElementById('u-email').innerText = session.user.email;
 
+            // ✅ 只在「第一次」且 iframe 還沒載任何頁面時，才導去預設頁
+            if (!isAppInitialized) {
+            const lastPage = sessionStorage.getItem('lastPage') || 'list.html';
+            const btnMap = {
+                'list.html': 'btn-list',
+                'scan.html': 'btn-scan',
+                'transfer.html': 'btn-transfer',
+                'consume.html': 'btn-consume',
+                'hospital.html': 'btn-hospital',
+            };
+            go(lastPage, document.getElementById(btnMap[lastPage] || 'btn-list'));
+            isAppInitialized = true;
+            }
+        }
+
+        function showLoggedOut() {
+            document.getElementById('login-screen').style.display = 'flex';
+            document.getElementById('app-bar').style.display = 'none';
+            document.getElementById('app-content').style.display = 'none';
+            isAppInitialized = false;
+        }
+
+        async function login() {
+            await _supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: { redirectTo: window.location.origin }
+            });
+        }
+
+        async function logout() {
+            await _supabase.auth.signOut();
+            sessionStorage.clear(); // 建議用 sessionStorage，不要清整個 localStorage
+            location.reload();
+        }
+
+        // ✅ 首次載入：用 getSession 決定顯示哪個畫面（避免 login 畫面先閃一下）
+        (async () => {
+            const { data } = await _supabase.auth.getSession();
+            if (data.session) showLoggedIn(data.session);
+            else showLoggedOut();
+
+            // ✅ 後續狀態變化：只更新 UI，不要在這裡硬 go('list.html')
+            _supabase.auth.onAuthStateChange((event, session) => {
+            if (session) showLoggedIn(session);
+            else showLoggedOut();
+            });
+        })();
+        
         _supabase.auth.onAuthStateChange((event, session) => {
             if (session) {
                 document.getElementById('login-screen').style.display = 'none';
