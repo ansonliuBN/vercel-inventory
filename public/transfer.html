@@ -4,68 +4,117 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; }
-        .item-box { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
-        .btn-transfer { width: 100%; padding: 15px; background: #28a745; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        body { font-family: sans-serif; padding: 15px; background: #f8f9fa; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .loc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .loc-item { background: #fff; border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
+        select { width: 100%; padding: 10px; margin-top: 5px; border-radius: 5px; border: 1px solid #ccc; }
+        .item-row { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; gap: 10px; }
+        .btn-submit { width: 100%; padding: 16px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; margin-top: 20px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <h3>🚚 撥補發貨 (從 業務倉庫)</h3>
-    <div style="background:#f8f9fa; padding:15px; border-radius:10px; margin-bottom:20px;">
-        <label>🎯 撥補目的地：</label>
-        <select id="to-loc" style="width:100%; padding:10px;"></select>
+    <div class="card">
+        <h3>🚚 物料撥補發貨</h3>
+        
+        <div class="loc-grid">
+            <div class="loc-item" style="border-left: 5px solid #007bff;">
+                <label>📤 <b>來源位置</b> (預設自動定位)</label>
+                <select id="from-loc" onchange="loadFromInventory()"></select>
+                <small id="gps-status" style="color: #28a745; font-size: 11px;">定位中...</small>
+            </div>
+
+            <div class="loc-item" style="border-left: 5px solid #28a745;">
+                <label>📥 <b>撥補目標</b> (請手動選擇)</label>
+                <select id="to-loc">
+                    <option value="">-- 請選擇收貨醫院 --</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="inventory-list">請選擇來源位置以讀取清單...</div>
+        
+        <button class="btn-submit" onclick="submitTransfer()">確認撥補發貨</button>
     </div>
 
-    <div id="warehouse-list">讀取業務倉庫庫存中...</div>
-    <button class="btn-transfer" onclick="doTransfer()">確認撥補</button>
-
 <script>
+    const fromSel = document.getElementById('from-loc');
+    const toSel = document.getElementById('to-loc');
+
     async function init() {
         const { data: locs } = await _supabase.from('locations').select('*');
-        const sel = document.getElementById('to-loc');
-        locs.forEach(l => sel.add(new Option(l.name, l.name)));
-
-        // 同步定位目的地
-        navigator.geolocation.getCurrentPosition(async (pos) => {
-            const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
-            if (nearest) sel.value = nearest.name;
+        
+        // 填入所有下拉選單
+        locs.forEach(l => {
+            fromSel.add(new Option(l.name, l.name));
+            toSel.add(new Option(l.name, l.name));
         });
 
-        loadList();
+        // 1. 來源位置使用共用定位功能
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+            if (nearest) {
+                fromSel.value = nearest.name;
+                document.getElementById('gps-status').innerText = "📍 已自動定位最近位置";
+                loadFromInventory();
+            }
+        }, () => {
+            document.getElementById('gps-status').innerText = "⚠️ 定位失敗，請手動選擇來源";
+        });
     }
 
-    async function loadList() {
-        const { data } = await _supabase.from('inventory_summary').select('*').eq('location', '業務倉庫');
-        document.getElementById('warehouse-list').innerHTML = data.map(i => `
-            <div class="item-box">
-                <input type="checkbox" name="move" value="${i.item_uuid}" style="zoom:1.3">
-                <div style="flex:1; margin-left:10px;">
-                    <b>${i.item_uuid}</b><br><small>在庫: ${i.current_stock}</small>
+    // 2. 讀取該來源地點目前的庫存
+    async function loadFromInventory() {
+        const loc = fromSel.value;
+        const { data } = await _supabase.from('inventory_summary').select('*').eq('location', loc);
+        
+        const listDiv = document.getElementById('inventory-list');
+        if (!data || data.length === 0) {
+            listDiv.innerHTML = `<p style="color:#999; text-align:center;">此位置目前無庫存</p>`;
+            return;
+        }
+
+        listDiv.innerHTML = data.map(i => `
+            <div class="item-row">
+                <input type="checkbox" name="move" value="${i.item_uuid}" style="zoom:1.5">
+                <div style="flex:1;">
+                    <b>${i.item_uuid}</b><br>
+                    <small>型號: ${i.product_code || '-'} | 在庫: ${i.current_stock}</small>
                 </div>
-                數量: <input type="number" id="qty-${i.item_uuid}" value="1" style="width:40px;">
+                數量: <input type="number" id="qty-${i.item_uuid}" value="1" min="1" max="${i.current_stock}" style="width:50px; padding:5px;">
             </div>
-        `).join('') || "業務倉庫目前沒貨";
+        `).join('');
     }
 
-    async function doTransfer() {
+    // 3. 提交撥補
+    async function submitTransfer() {
         const checked = document.querySelectorAll('input[name="move"]:checked');
-        const target = document.getElementById('to-loc').value;
-        if(checked.length === 0) return alert("請勾選物料");
+        const source = fromSel.value;
+        const target = toSel.value;
 
-        for(let el of checked) {
-            const qty = document.getElementById('qty-' + el.value).value;
+        if (!target || source === target) return alert("請選擇正確的撥補目標(且不能與來源相同)");
+        if (checked.length === 0) return alert("請勾選要撥補的物料");
+
+        for (let el of checked) {
+            const uuid = el.value;
+            const qty = document.getElementById('qty-' + uuid).value;
+            
             await fetch('/api/stock', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    item_uuid: el.value, from_loc: '業務倉庫', to_loc: target,
-                    quantity: parseInt(qty), operator: localStorage.getItem('user_email')
+                    item_uuid: uuid,
+                    from_loc: source,
+                    to_loc: target,
+                    quantity: parseInt(qty),
+                    operator: localStorage.getItem('user_email')
                 })
             });
         }
-        alert("撥補成功！");
+        alert("撥補完成！");
         location.reload();
     }
+
     init();
 </script>
 </body>

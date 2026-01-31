@@ -1,114 +1,94 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Brain Navi 物料管理系統</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <style>
-        :root { --primary: #007bff; --bg: #f0f2f5; --nav-h: 65px; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; overflow: hidden; }
+        body { font-family: -apple-system, sans-serif; padding: 15px; background: white; margin: 0; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; } /* 鎖定表格布局 */
         
-        /* 頂部導覽列 */
-        .navbar { 
-            background: white; height: var(--nav-h); padding: 0 20px; 
-            display: flex; align-items: center; justify-content: space-between; 
-            border-bottom: 1px solid #ddd; box-shadow: 0 2px 8px rgba(0,0,0,0.06); 
-            position: fixed; top: 0; width: 100%; box-sizing: border-box; z-index: 1000; 
-        }
-        .logo { font-size: 18px; font-weight: bold; color: #333; border-left: 4px solid var(--primary); padding-left: 10px; white-space: nowrap; }
-        .nav-links { display: flex; gap: 8px; margin: 0 15px; }
-        
-        /* 按鈕美化 */
-        .nav-btn { 
-            background: #fff; color: #555; border: 1px solid #ddd; padding: 8px 16px; 
-            border-radius: 8px; cursor: pointer; font-size: 14px; white-space: nowrap; transition: 0.2s; 
-        }
-        .nav-btn:hover { background: #f8f9fa; border-color: #bbb; }
-        .nav-btn.active { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 4px 10px rgba(0,123,255,0.3); }
-        
-        .user-info { display: flex; align-items: center; gap: 10px; min-width: 180px; justify-content: flex-end; }
-        .user-email { font-size: 12px; color: #777; font-weight: 500; }
-        .user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #eee; }
+        th { background: #f8f9fa; padding: 12px 8px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
+        td { padding: 12px 8px; border-bottom: 1px solid #eee; font-size: 14px; word-break: break-all; vertical-align: top; }
 
-        /* 這裡就是你說的「留空」設定 */
-        .main-wrapper { 
-            margin-top: var(--nav-h); 
-            height: calc(100vh - var(--nav-h)); 
-            padding: 20px;           /* 內容區四周留白 */
-            box-sizing: border-box;
-            max-width: 1200px;       /* 限制最大寬度，電腦看才不會太寬 */
-            margin-left: auto;       /* 左右置中 */
-            margin-right: auto;
-        }
-        
-        /* Iframe 容器美化：加點圓角與陰影 */
-        .iframe-container {
-            width: 100%;
-            height: 100%;
-            background: white;
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            border: 1px solid #e0e0e0;
-        }
-        iframe { width: 100%; height: 100%; border: none; }
+        /* --- 核心比例設定 --- */
+        .col-loc { width: 12%; }   /* 位置：縮小 */
+        .col-name { width: 25%; }  /* 產品：適中 */
+        .col-exp { width: 13%; }   /* 效期：縮小 */
+        .col-qty { width: 8%; text-align: center; } /* 數量：最小且置中 */
+        .col-note { width: 42%; }  /* 備註：最大 */
 
-        /* 登入蓋板 */
-        #login-screen { position: fixed; inset: 0; background: white; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .google-btn { background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; gap: 10px; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .urgent { color: #d9534f; font-weight: bold; } /* 三個月內紅字 */
+        .row-biz { background: #f0f7ff; } /* 業務倉庫高亮 */
     </style>
 </head>
 <body>
-    <div id="login-screen">
-        <h2 style="letter-spacing: 2px;">📦 業務耗材管理系統</h2>
-        <button class="google-btn" onclick="login()"> <img src="https://www.google.com/favicon.ico" width="18"> 使用 Google 登入</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2 style="margin:0;">📦 庫存實時總表</h2>
+        <button onclick="load()" style="padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #ddd;">🔄 刷新數據</button>
     </div>
 
-    <nav class="navbar" id="app-bar" style="display:none;">
-        <div class="logo">物料管理 <small style="font-weight:normal; font-size:11px; color:#999;">v2.6</small></div>
-        
-        <div class="nav-links">
-            <button class="nav-btn active" onclick="switchTab('list.html', this)">📦 庫存總表</button>
-            <button class="nav-btn" onclick="switchTab('scan.html', this)">✨ 新貨入庫</button>
-            <button class="nav-btn" onclick="switchTab('transfer.html', this)">🚚 撥補發貨</button>
-            <button class="nav-btn" onclick="switchTab('consume.html', this)">🏥 醫院領用</button>
-            <button class="nav-btn" onclick="switchTab('hospital.html', this)">🛠️ 醫院管理</button>
-        </div>
+    <table>
+        <thead>
+            <tr>
+                <th class="col-loc">位置</th>
+                <th class="col-name">產品 / 序號</th>
+                <th class="col-exp">效期</th>
+                <th class="col-qty">數量</th>
+                <th class="col-note">備註</th>
+            </tr>
+        </thead>
+        <tbody id="list">
+            <tr><td colspan="5" style="text-align:center; padding:40px; color:#999;">正在連線資料庫...</td></tr>
+        </tbody>
+    </table>
 
-        <div class="user-info">
-            <span class="user-email" id="u-email"></span>
-            <img class="user-avatar" id="u-img" src="">
-            <button onclick="logout()" style="color:#ff4d4f; background:none; border:none; cursor:pointer; font-size:12px; font-weight:bold;">登出</button>
-        </div>
-    </nav>
-
-    <main class="main-wrapper" id="app-content" style="display:none;">
-        <div class="iframe-container">
-            <iframe id="sub-page" src="list.html"></iframe>
-        </div>
-    </main>
-
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js"></script>
     <script>
-        async function login() { await _supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } }); }
-        async function logout() { await _supabase.auth.signOut(); localStorage.clear(); location.reload(); }
-        
-        function switchTab(url, btn) {
-            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('sub-page').src = url;
-        }
+        const productMapping = {
+            'FPSD0101': 'Surgical Equipment Drape Packs',
+            'FPIR0211': 'Instrument Registration Platform Cover',
+            'FPEN1774': 'Lens 2D'
+        };
 
-        _supabase.auth.onAuthStateChange((event, session) => {
-            if (session) {
-                localStorage.setItem('user_email', session.user.email);
-                document.getElementById('login-screen').style.display = 'none';
-                document.getElementById('app-bar').style.display = 'flex';
-                document.getElementById('app-content').style.display = 'block';
-                document.getElementById('u-email').innerText = session.user.email;
-                document.getElementById('u-img').src = session.user.user_metadata.avatar_url;
-            }
-        });
+        async function load() {
+            const { data, error } = await _supabase.from('inventory_summary').select('*');
+            if (error) return console.error(error);
+
+            // 排序：業務倉庫置頂 > 近期活躍 (last_active) > 效期 (expiry_date)
+            data.sort((a, b) => {
+                if (a.location === '業務倉庫') return -1;
+                if (b.location === '業務倉庫') return 1;
+                if (a.last_active !== b.last_active) return new Date(b.last_active || 0) - new Date(a.last_active || 0);
+                return new Date(a.expiry_date || '9999-12-31') - new Date(b.expiry_date || '9999-12-31');
+            });
+
+            const limitDate = new Date();
+            limitDate.setMonth(limitDate.getMonth() + 3);
+
+            document.getElementById('list').innerHTML = data.map(i => {
+                // 處理產品名稱轉換 (抓取 - 之前的代碼)
+                const prefix = i.product_code ? i.product_code.split('-')[0] : '';
+                const friendlyName = productMapping[prefix] || i.product_code || '未知產品';
+                
+                // 效期顏色判斷
+                const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+
+                return `
+                    <tr class="${i.location === '業務倉庫' ? 'row-biz' : ''}">
+                        <td><b>${i.location}</b></td>
+                        <td>
+                            <div style="font-weight:bold; color:#333;">${friendlyName}</div>
+                            <div style="font-size:11px; color:#999; margin-top:2px;">${i.item_uuid}</div>
+                        </td>
+                        <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
+                        <td style="text-align:center;"><b>${i.current_stock}</b></td>
+                        <td style="color:#666; font-size:13px; line-height:1.4;">
+                            ${i.location_note ? `<span onclick="alert('📢 提醒：${i.location_note}')" style="cursor:help;">➕ ${i.location_note}</span>` : '-'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        load();
     </script>
 </body>
 </html>
