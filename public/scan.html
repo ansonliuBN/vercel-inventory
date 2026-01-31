@@ -336,9 +336,10 @@
 
     showSourcePill(result.source);
 
-    document.getElementById('editGtin').value = data.gtin || "";
-    document.getElementById('editExp').value  = data.expDisplay || "";
+    document.getElementById('editGtin').value = data.gtin || data.gtin_raw || "";
+    document.getElementById('editExp').value  = data.exp || data.exp_raw || "";
     document.getElementById('editLot').value  = data.lot || "";
+
 
     loader.style.display = "none";
     document.getElementById('reviewArea').style.display = "block";
