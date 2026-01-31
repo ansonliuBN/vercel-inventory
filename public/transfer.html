@@ -107,7 +107,9 @@
                     from_loc: source,
                     to_loc: target,
                     quantity: parseInt(qty),
-                    operator: localStorage.getItem('user_email')
+                    operator: localStorage.getItem('user_email'),
+                    product_code: el.dataset.code, // 從標籤抓回代碼
+                    expiry_date: el.dataset.exp    // 從標籤抓回效期
                 })
             });
         }

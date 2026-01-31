@@ -9,6 +9,14 @@
         th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
         td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
         .urgent { color: red; font-weight: bold; }
+        .col-note { 
+            width: 42%; 
+            white-space: pre-wrap; /* 💡 關鍵：這行能讓備註裡的換行生效 */
+            word-wrap: break-word;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -27,11 +35,6 @@
     </table>
 
     <script>
-        const productNames = {
-            'FPSD0101': 'Surgical Equipment Drape Packs',
-            'FPIR0211': 'Instrument Registration Platform Cover',
-            'FPEN1774': 'Lens 2D'
-        };
 
         async function load() {
             const { data, error } = await _supabase.from('inventory_summary').select('*');
@@ -52,6 +55,9 @@
                 const prefix = i.product_code ? i.product_code.split('-')[0] : '';
                 const friendlyName = productNames[prefix] || i.product_code || '未知產品';
                 const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+
+                // 💡 這裡變簡單了，直接拿資料庫傳回來的名稱，沒有的話顯示產品代碼
+                const displayName = i.friendly_name || i.product_code || '未知產品';
 
                 return `
                     <tr>
