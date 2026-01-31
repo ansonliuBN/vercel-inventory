@@ -1,43 +1,42 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html>
 <head>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: white; margin: 0; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; border: 1px solid #eee; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
-        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-        .exp-soon { color: #d9534f; background: #fff5f5; } /* 快過期顯示紅色 */
+        body { font-family: sans-serif; padding: 15px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: left; }
+        .plus-icon { color: #007bff; cursor: pointer; font-weight: bold; margin-left: 5px; }
+        .row-biz { background: #f0f7ff; font-weight: bold; } /* 業務倉庫高亮 */
     </style>
 </head>
 <body>
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h2>📦 即時庫存總表</h2>
-        <button onclick="loadData()">🔄 刷新數據</button>
-    </div>
+    <h3>📦 庫存實時總表</h3>
     <table>
-        <thead>
-            <tr><th>位置</th><th>產品/序號</th><th>效期</th><th>庫存量</th></tr>
-        </thead>
-        <tbody id="list"></tbody>
+        <thead><tr><th>庫存位置</th><th>產品/序號</th><th>效期</th><th>庫存</th><th>備註</th></tr></thead>
+        <tbody id="data-list"></tbody>
     </table>
 
     <script>
-        const _supabase = supabase.createClient('YOUR_URL', 'YOUR_ANON_KEY');
-        async function loadData() {
-            const { data } = await _supabase.from('inventory_summary').select('*').gt('current_stock', 0).order('expiry_date', { ascending: true });
-            document.getElementById('list').innerHTML = data.map(i => `
-                <tr>
-                    <td><b>${i.location}</b></td>
-                    <td>${i.item_uuid}<br><small style="color:#999">${i.product_code || ''}</small></td>
-                    <td><span class="${isSoon(i.expiry_date) ? 'exp-soon' : ''}">${i.expiry_date || 'N/A'}</span></td>
-                    <td><b style="color:#007bff">${i.current_stock}</b></td>
+        async function load() {
+            const { data } = await window._supabase.from('inventory_summary').select('*');
+            // 排序邏輯：業務倉庫永遠第一
+            data.sort((a,b) => (a.location === '業務倉庫' ? -1 : 1));
+            
+            document.getElementById('data-list').innerHTML = data.map(i => `
+                <tr class="${i.location === '業務倉庫' ? 'row-biz' : ''}">
+                    <td>${i.location}</td>
+                    <td>${i.item_uuid}</td>
+                    <td>${i.expiry_date || '-'}</td>
+                    <td>${i.current_stock}</td>
+                    <td>
+                        ${i.location_note ? `<span class="plus-icon" onclick="alert('📢 提醒：${i.location_note}')">[+]</span>` : ''}
+                    </td>
                 </tr>
             `).join('');
         }
-        function isSoon(d) { if(!d) return false; return new Date(d) < new Date(Date.now() + 90*24*60*60*1000); } // 90天內算快過期
-        loadData();
+        load();
     </script>
 </body>
 </html>

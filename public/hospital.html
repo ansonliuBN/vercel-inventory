@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<body>
+    <h3>🏥 醫院管理中心</h3>
+    <div style="background:#f4f4f4; padding:15px; border-radius:10px;">
+        <p>📍 目前位置：<b id="loc-display">定位中...</b></p>
+        <select id="loc-select"></select>
+        <hr>
+        <label>📝 地點提醒設定：</label>
+        <textarea id="note-input" style="width:100%; height:80px;"></textarea>
+        <button onclick="saveNote()" style="background:#27ae60; color:white; width:100%; padding:10px; margin-top:10px;">儲存提醒</button>
+        <button onclick="deleteNote()" style="background:#666; color:white; width:100%; padding:5px; margin-top:5px;">刪除提醒</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script>
+        async function init() {
+            // 1. 抓地點選單
+            const { data: locs } = await window._supabase.from('locations').select('*');
+            const select = document.getElementById('loc-select');
+            locs.forEach(l => select.add(new Option(l.name, l.name)));
+
+            // 2. 自動定位
+            navigator.geolocation.getCurrentPosition(async pos => {
+                const nearest = await findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+                if (nearest) {
+                    document.getElementById('loc-display').innerText = nearest.name;
+                    select.value = nearest.name;
+                    document.getElementById('note-input').value = nearest.note || '';
+                }
+            });
+        }
+
+        async function saveNote() {
+            const name = document.getElementById('loc-select').value;
+            const note = document.getElementById('note-input').value;
+            await window._supabase.from('locations').update({ note }).eq('name', name);
+            alert("儲存成功！");
+        }
+
+        async function deleteNote() {
+            const name = document.getElementById('loc-select').value;
+            await window._supabase.from('locations').update({ note: null }).eq('name', name);
+            document.getElementById('note-input').value = '';
+            alert("已清除！");
+        }
+        init();
+    </script>
+</body>
+</html>
