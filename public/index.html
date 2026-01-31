@@ -6,69 +6,89 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        :root { --primary: #007bff; --bg: #f4f7f9; --nav-h: 65px; }
+        :root { --primary: #007bff; --bg: #f0f2f5; --nav-h: 70px; }
         body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; overflow: hidden; }
 
-        /* 頂部 BAR */
+        /* 頂部 BAR：至中對齊 */
         .navbar { 
-            background: white; height: var(--nav-h); padding: 0 20px; 
-            display: flex; align-items: center; justify-content: space-between; 
+            background: white; height: var(--nav-h); padding: 0 40px; 
+            display: none; align-items: center; justify-content: space-between; 
             border-bottom: 1px solid #ddd; position: fixed; top: 0; width: 100%; box-sizing: border-box; z-index: 1000; 
-            display: none; /* 預設隱藏，由 JS 開啟 */
         }
-        .logo { font-size: 18px; font-weight: bold; border-left: 4px solid var(--primary); padding-left: 10px; }
+        .logo { font-size: 20px; font-weight: bold; color: #333; flex: 1; } /* 左邊 */
         
-        /* 選單與按鈕 */
-        .nav-links { display: flex; gap: 8px; }
-        .nav-btn { background: #fff; border: 1px solid #ddd; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-        .nav-btn.active { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 4px 10px rgba(0,123,255,0.2); }
+        .nav-links { display: flex; gap: 12px; justify-content: center; flex: 2; } /* 中間至中 */
+        .nav-btn { 
+            background: #fff; border: 1px solid #ddd; padding: 10px 20px; 
+            border-radius: 8px; cursor: pointer; font-size: 15px; font-weight: 500; transition: 0.2s; 
+        }
+        .nav-btn.active { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 4px 12px rgba(0,123,255,0.2); }
+        .nav-btn:hover:not(.active) { background: #f8f9fa; }
 
-        /* 漢堡選單 (手機用) */
-        .burger { display: none; font-size: 28px; cursor: pointer; }
+        .user-area { flex: 1; display: flex; justify-content: flex-end; align-items: center; gap: 15px; } /* 右邊 */
 
-        @media (max-width: 850px) {
+        /* 手機版三條線 */
+        .burger { display: none; font-size: 30px; cursor: pointer; }
+
+        @media (max-width: 950px) {
+            .navbar { padding: 0 20px; }
             .burger { display: block; }
             .nav-links { 
                 display: none; position: absolute; top: var(--nav-h); left: 0; width: 100%; 
-                background: white; flex-direction: column; padding: 10px; border-bottom: 1px solid #ddd; 
-                box-shadow: 0 5px 15px rgba(0,0,0,0.1); 
+                background: white; flex-direction: column; padding: 15px; border-bottom: 1px solid #ddd; 
             }
             .nav-links.active { display: flex; }
             .nav-btn { width: 100%; text-align: left; border: none; padding: 15px; }
+            .logo, .user-area { flex: none; }
         }
 
-        /* 內容區：左右留空 */
+        /* 內容區：嚴格至中與左右留白 */
         .main-wrapper { 
-            margin-top: var(--nav-h); height: calc(100vh - var(--nav-h)); padding: 15px; 
-            max-width: 1400px; margin-left: auto; margin-right: auto; box-sizing: border-box; 
-            display: none; /* 預設隱藏 */
+            margin-top: var(--nav-h); height: calc(100vh - var(--nav-h)); 
+            padding: 25px;           /* 增加上下留白 */
+            max-width: 1200px;       /* 鎖定黃金比例寬度 */
+            margin-left: auto;       /* 強制左右置中 */
+            margin-right: auto;
+            box-sizing: border-box;
+            display: none;
         }
-        .frame-box { width: 100%; height: 100%; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .frame-box { 
+            width: 100%; height: 100%; background: white; 
+            border-radius: 15px; overflow: hidden; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08); /* 增加高級感陰影 */
+            border: 1px solid #e0e0e0;
+        }
         iframe { width: 100%; height: 100%; border: none; }
         
         /* 登入畫面 */
         #login-screen { position: fixed; inset: 0; background: white; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-        .google-btn { background: white; border: 1px solid #ddd; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; display: flex; gap: 10px; align-items: center; }
+        .google-btn { background: white; border: 1px solid #ddd; padding: 15px 30px; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: bold; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
     </style>
 </head>
 <body>
     <div id="login-screen">
-        <h2>📦 耗材管理系統</h2>
+        <h1 style="margin-bottom:30px; color:#333;">📦 業務耗材管理系統</h1>
         <button class="google-btn" onclick="login()">
-            <img src="https://www.google.com/favicon.ico" width="18"> 使用 Google 帳號登入
+            <img src="https://www.google.com/favicon.ico" width="20"> 使用 Google 帳號登入
         </button>
     </div>
 
     <nav class="navbar" id="app-bar">
-        <div class="logo">耗材管理系統</div>
+        <div class="logo">Brain Navi</div>
+        
         <div class="burger" onclick="toggleMenu()">☰</div>
+
         <div class="nav-links" id="menu">
             <button id="btn-list" class="nav-btn" onclick="go('list.html', this)">📦 庫存總表</button>
             <button id="btn-scan" class="nav-btn" onclick="go('scan.html', this)">✨ 新貨入庫</button>
             <button id="btn-transfer" class="nav-btn" onclick="go('transfer.html', this)">🚚 撥補發貨</button>
             <button id="btn-consume" class="nav-btn" onclick="go('consume.html', this)">🏥 醫院領用</button>
             <button id="btn-hospital" class="nav-btn" onclick="go('hospital.html', this)">🛠️ 醫院管理</button>
-            <button onclick="logout()" style="color:red; background:none; border:none; padding:15px; cursor:pointer;">登出</button>
+        </div>
+
+        <div class="user-area">
+            <span id="u-email" style="font-size:12px; color:#666;"></span>
+            <button onclick="logout()" style="color:#ff4d4f; background:none; border:none; cursor:pointer; font-weight:bold;">登出</button>
         </div>
     </nav>
 
@@ -79,43 +99,37 @@
     </main>
 
     <script>
-        // 漢堡選單切換
+        let isAppInitialized = false; // 防閃爍鎖
+
         function toggleMenu() { document.getElementById('menu').classList.toggle('active'); }
 
-        // 切換分頁邏輯
         function go(url, btn) {
+            const iframe = document.getElementById('sub-page');
+            if (iframe.src.includes(url)) return; // 如果已經在該頁，就不重複跳轉
+            
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
             if (btn) btn.classList.add('active');
-            document.getElementById('sub-page').src = url;
-            if (window.innerWidth <= 850) document.getElementById('menu').classList.remove('active');
+            iframe.src = url;
+            
+            if (window.innerWidth <= 950) document.getElementById('menu').classList.remove('active');
         }
 
-        // Supabase 登入登出
-        async function login() { 
-            await _supabase.auth.signInWithOAuth({ 
-                provider: 'google', 
-                options: { redirectTo: window.location.origin } 
-            }); 
-        }
-        async function logout() { 
-            await _supabase.auth.signOut(); 
-            localStorage.clear(); 
-            location.reload(); 
-        }
+        async function login() { await _supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } }); }
+        async function logout() { await _supabase.auth.signOut(); localStorage.clear(); location.reload(); }
 
-        // 監聽登入狀態
         _supabase.auth.onAuthStateChange((event, session) => {
             if (session) {
-                // 登入成功：顯示 UI
                 document.getElementById('login-screen').style.display = 'none';
                 document.getElementById('app-bar').style.display = 'flex';
                 document.getElementById('app-content').style.display = 'block';
-                
-                // 強制進入「庫存總表」
-                const listBtn = document.getElementById('btn-list');
-                go('list.html', listBtn);
+                document.getElementById('u-email').innerText = session.user.email;
+
+                // 核心防閃爍：只在第一次載入時跳轉到總表
+                if (!isAppInitialized) {
+                    go('list.html', document.getElementById('btn-list'));
+                    isAppInitialized = true;
+                }
             } else {
-                // 未登入：只顯示登入畫面
                 document.getElementById('login-screen').style.display = 'flex';
                 document.getElementById('app-bar').style.display = 'none';
                 document.getElementById('app-content').style.display = 'none';
