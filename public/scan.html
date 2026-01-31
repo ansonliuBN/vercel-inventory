@@ -420,7 +420,9 @@
 
     if (res.ok) {
       alert("✅ 匯入成功！已存入 " + qty + " 件物料。");
-      location.href = 'index.html';
+      if (window.parent !== window) {
+        window.parent.postMessage({ type: 'STOCK_IMPORTED' }, '*');
+      }
     } else {
       const err = await res.json().catch(() => ({message: "連線異常"}));
       alert("❌ 失敗: " + err.message);
