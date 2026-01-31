@@ -1,172 +1,132 @@
-<div class="card">
-    <h1>🏢 總公司倉庫</h1>
-    <div id="main-stock-display">載入中...</div>
-    <button onclick="location.href='scan.html'" style="background:#50c878;">📷 掃描新進貨物</button>
-</div>
-
-<div class="card">
-    <h2>📍 銷售據點管理</h2>
-    <div class="tabs">
-        <button onclick="switchLocation('LOC_A')">地點 A</button>
-        <button onclick="switchLocation('LOC_B')">地點 B</button>
-    </div>
-    <div id="location-inventory-list">
-        <p>請選擇上方地點查看清單</p>
-    </div>
-</div>
-
-<script>
-    // 1. 抓取總表數據
-    async function fetchSummary() {
-        const res = await fetch('/api/stock');
-        const data = await res.json();
-        
-        // 渲染公司倉 (MAIN)
-        const main = data.filter(i => i.location === 'MAIN');
-        document.getElementById('main-stock-display').innerHTML = main.map(i => 
-            `<p>${i.item_uuid.substring(0,12)}... : <b>${i.current_stock}</b> 件</p>`
-        ).join('') || "目前無庫存";
-        
-        window.allData = data; // 暫存起來給切換地點用
-    }
-
-    // 2. 切換地點顯示清單
-    function switchLocation(loc) {
-        const list = window.allData.filter(i => i.location === loc && i.current_stock > 0);
-        const container = document.getElementById('location-inventory-list');
-        
-        container.innerHTML = `<h3>${loc} 在庫清單</h3>` + list.map(i => `
-            <div class="stock-row">
-                <span>${i.item_uuid.substring(0,12)}</span>
-                <button onclick="doConsume('${i.item_uuid}', '${loc}')">銷帳 -1</button>
-            </div>
-        `).join('');
-    }
-
-    // 3. 銷帳動作
-    async function doConsume(uuid, loc) {
-        if(!confirm('確認消耗此物料？')) return;
-        await fetch('/api/stock', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>庫存管理系統 Ver. 2026.01.24</title>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<style>
-  :root { --primary: #007bff; --bg: #f8f9fa; }
-  body { font-family: -apple-system, "Segoe UI", sans-serif; background: var(--bg); margin: 0; }
-  
-  /* 導覽列 BAR */
-  .navbar { background: white; padding: 10px 20px; display: flex; align-items: center; border-bottom: 1px solid #eee; box-shadow: 0 2px 5px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 1000; }
-  .logo { font-size: 20px; font-weight: bold; color: #333; border-left: 4px solid var(--primary); padding-left: 10px; margin-right: 30px; }
-  .nav-links { display: flex; gap: 10px; flex-grow: 1; }
-  
-  /* 圓角按鈕 */
-  .nav-btn { background: #f4f4f4; color: #666; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 5px; transition: 0.2s; }
-  .nav-btn:hover { background: #e9e9e9; }
-  .nav-btn.active { background: var(--primary); color: white; box-shadow: 0 4px 10px rgba(0,123,255,0.3); }
-  
-  /* 用戶資訊 */
-  .user-box { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #666; }
-  .user-avatar { width: 30px; height: 30px; border-radius: 50%; background: #ddd; }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brain Navi 庫存管理系統</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    :root { --primary: #007bff; --bg: #f8f9fa; --nav-h: 60px; }
+    body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); margin: 0; overflow: hidden; }
+    
+    /* 頂部導覽列 BAR */
+    .navbar { 
+      background: white; height: var(--nav-h); padding: 0 20px; 
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid #ddd; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+      position: fixed; top: 0; width: 100%; box-sizing: border-box; z-index: 1000;
+    }
+    .logo-area { display: flex; align-items: center; gap: 10px; }
+    .logo { font-size: 18px; font-weight: bold; color: #333; border-left: 4px solid var(--primary); padding-left: 10px; }
+    
+    .nav-links { display: flex; gap: 8px; }
+    .nav-btn { 
+      background: #f8f9fa; color: #555; border: 1px solid #eee; padding: 8px 16px; 
+      border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: 0.2s;
+    }
+    .nav-btn:hover { background: #e9ecef; }
+    .nav-btn.active { background: var(--primary); color: white; border-color: var(--primary); box-shadow: 0 3px 8px rgba(0,123,255,0.3); }
+    
+    .user-info { display: flex; align-items: center; gap: 10px; }
+    .user-email { font-size: 13px; color: #777; font-weight: 500; }
+    .user-avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid #ddd; }
 
-  /* 內容區域 */
-  .main-container { padding: 20px; max-width: 1200px; margin: auto; }
-  iframe { width: 100%; height: 85vh; border: none; border-radius: 12px; background: white; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+    /* 主要內容區 */
+    .main-wrapper { margin-top: var(--nav-h); height: calc(100vh - var(--nav-h)); width: 100%; }
+    iframe { width: 100%; height: 100%; border: none; }
 
-  /* 登入遮罩 */
-  #login-overlay { position: fixed; inset: 0; background: white; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2000; }
-</style>
+    /* 登入蓋板 */
+    #login-screen { 
+      position: fixed; inset: 0; background: white; z-index: 2000; 
+      display: flex; flex-direction: column; align-items: center; justify-content: center; 
+    }
+    .login-card { padding: 40px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; }
+  </style>
 </head>
 <body>
 
-<div id="login-overlay">
-    <h2>🔐 歡迎使用庫存系統</h2>
-    <p>請先登入您的 Gmail 帳號以繼續</p>
-    <div id="g_id_onload"
-         data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
-         data-callback="handleCredentialResponse"
-         data-auto_prompt="false">
+  <div id="login-screen">
+    <div class="login-card">
+      <h1 style="color: #333;">📦 庫存管理系統</h1>
+      <p style="color: #666; margin-bottom: 30px;">請使用公司 Gmail 帳號登入</p>
+      
+      <div id="g_id_onload"
+           data-client_id="YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+           data-callback="handleSignIn"
+           data-auto_prompt="false">
+      </div>
+      <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-size="large"></div>
     </div>
-    <div class="g_id_signin" data-type="standard"></div>
-</div>
+  </div>
 
-<div class="navbar" id="app-bar" style="display:none;">
-    <div class="logo">庫存系統 <small style="font-weight:normal; font-size:12px; color:#999;">Ver. 2026</small></div>
-    
+  <nav class="navbar" id="app-bar" style="display:none;">
+    <div class="logo-area">
+      <div class="logo">物料管理 <span style="font-weight: normal; color: #999; font-size: 12px;">v2.6</span></div>
+    </div>
+
     <div class="nav-links">
-        <button class="nav-btn active" onclick="loadPage('list.html', this)">📦 庫存列表</button>
-        <button class="nav-btn" onclick="loadPage('scan.html', this)">✨ 新貨入庫</button>
-        <button class="nav-btn" onclick="loadPage('transfer.html', this)">🚚 進出貨</button>
-        <button class="nav-btn" onclick="loadPage('hospital.html', this)">🏥 醫院管理</button>
+      <button class="nav-btn active" onclick="switchTab('list.html', this)">📦 庫存總表</button>
+      <button class="nav-btn" onclick="switchTab('scan.html', this)">✨ 新貨入庫</button>
+      <button class="nav-btn" onclick="switchTab('transfer.html', this)">🚚 撥補發貨</button>
     </div>
 
-    <div class="user-box">
-        <span id="user-email">載入中...</span>
-        <img id="user-img" class="user-avatar" src="" alt="">
-        <button onclick="logout()" style="background:none; border:none; color:red; cursor:pointer; font-size:12px;">登出</button>
+    <div class="user-info">
+      <span class="user-email" id="display-email"></span>
+      <img class="user-avatar" id="display-img" src="" alt="user">
+      <button onclick="doLogout()" style="background:none; border:none; color:#ff4d4f; cursor:pointer; font-size:12px; padding:0;">登出</button>
     </div>
-</div>
+  </nav>
 
-<div class="main-container" id="main-content" style="display:none;">
-    <iframe id="content-frame" src="list.html"></iframe>
-</div>
+  <main class="main-wrapper" id="app-content" style="display:none;">
+    <iframe id="sub-page" src="list.html"></iframe>
+  </main>
 
-<script>
-    // 1. Google 登入處理
-    function handleCredentialResponse(response) {
-        const payload = parseJwt(response.credential);
-        localStorage.setItem('user_email', payload.email);
-        localStorage.setItem('user_name', payload.name);
-        localStorage.setItem('user_img', payload.picture);
-        showApp();
-    }
-
+  <script>
+    // 解析 Google 回傳的 Token
     function parseJwt(token) {
-        var base64Url = token.split('.')[1];
-        var base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-        return JSON.parse(window.atob(base64));
+      const base64Url = token.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      return JSON.parse(decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join('')));
     }
 
-    function showApp() {
-        document.getElementById('login-overlay').style.display = 'none';
-        document.getElementById('app-bar').style.display = 'flex';
-        document.getElementById('main-content').style.display = 'block';
-        document.getElementById('user-email').innerText = localStorage.getItem('user_email');
-        document.getElementById('user-img').src = localStorage.getItem('user_img');
+    // 登入成功回調
+    function handleSignIn(response) {
+      const user = parseJwt(response.credential);
+      localStorage.setItem('user_email', user.email);
+      localStorage.setItem('user_img', user.picture);
+      initApp();
     }
 
-    // 2. 切換頁面邏輯
-    function loadPage(page, btn) {
-        // 更新按鈕樣式
-        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        
-        // 切換 iframe 內容
-        document.getElementById('content-frame').src = page;
+    // 啟動主程式 UI
+    function initApp() {
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app-bar').style.display = 'flex';
+      document.getElementById('app-content').style.display = 'block';
+      document.getElementById('display-email').innerText = localStorage.getItem('user_email');
+      document.getElementById('display-img').src = localStorage.getItem('user_img');
     }
 
-    function logout() {
-        localStorage.clear();
-        location.reload();
+    // 切換分頁邏輯
+    function switchTab(url, btn) {
+      document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('sub-page').src = url;
     }
 
-    // 自動檢查是否已登入
+    // 登出
+    function doLogout() {
+      localStorage.clear();
+      location.reload();
+    }
+
+    // 檢查是否已登入
     window.onload = () => {
-        if(localStorage.getItem('user_email')) showApp();
+      if (localStorage.getItem('user_email')) {
+        initApp();
+      }
     };
-</script>
-
+  </script>
 </body>
 </html>
-            body: JSON.stringify({ item_uuid: uuid, from_loc: loc, to_loc: 'CONSUMED', operator: '現場業務' })
-        });
-        alert('銷帳成功！');
-        location.reload(); // 重新整理
-    }
-
-    fetchSummary();
-</script>
