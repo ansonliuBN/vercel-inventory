@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'POST') {
-      const { item_uuid, from_loc, to_loc, operator, expiry_date, product_code } = req.body;
+      const { item_uuid, from_loc, to_loc, operator, expiry_date, product_code, quantity } = req.body;
       
       if (!item_uuid) throw new Error("缺少序號 (UUID)");
 
@@ -18,7 +18,8 @@ export default async function handler(req, res) {
         to_loc: to_loc,
         operator_name: operator,
         expiry_date,
-        product_code
+        product_code,
+        quantity: quantity
       }]);
 
       if (error) throw error;
