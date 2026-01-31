@@ -2,7 +2,8 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Sharp + Tesseract Debug 測試工具 (自動縮圖版)</title>
+    <title>Sharp + Tesseract 本地辨識測試</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         body { font-family: sans-serif; text-align: center; padding: 20px; background: #f0f2f5; }
         .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
@@ -11,39 +12,35 @@
         .debug-card img { width: 100%; border-radius: 4px; background: #eee; min-height: 100px; }
         .result-box { margin-top: 20px; padding: 15px; background: #eef; border-radius: 8px; border: 2px solid #7360f2; }
         #status { font-weight: bold; color: #7360f2; margin: 10px 0; }
-        .log-box { text-align: left; font-size: 12px; background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-top: 10px; max-height: 100px; overflow-y: auto; }
+        .log-box { text-align: left; font-size: 11px; background: #333; color: #0f0; padding: 10px; border-radius: 5px; margin-top: 10px; height: 120px; overflow-y: auto; font-family: monospace; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>🔍 Sharp + Tesseract 自動縮圖測試</h2>
+    <h2>🔍 Sharp (後端) + Tesseract (前端) 測試</h2>
     
     <input type="file" id="fileInput" accept="image/*" onchange="processAndUpload()">
     <div id="status">準備就緒</div>
     <div id="log" class="log-box">等待操作...</div>
 
     <div class="result-box">
-        辨識文字結果：<span id="ocrText" style="font-size: 1.4rem;">尚未開始</span>
+        辨識結果：<span id="ocrText" style="font-size: 1.4rem; color: #d63384;">尚未辨識</span>
     </div>
 
     <div class="debug-grid">
-        <div class="debug-card"><b>1. 基本增強</b><img id="imgBase"></div>
-        <div class="debug-card"><b>2. 二值化</b><img id="imgThreshold"></div>
-        <div class="debug-card"><b>3. 銳化</b><img id="imgSharp"></div>
+        <div class="debug-card"><b>1. 原始縮圖</b><img id="imgBase"></div>
+        <div class="debug-card"><b>2. 二值化 (OCR用)</b><img id="imgThreshold"></div>
+        <div class="debug-card"><b>3. 銳化版本</b><img id="imgSharp"></div>
     </div>
 </div>
 
 <script>
     const log = (msg) => {
         const box = document.getElementById('log');
-        box.innerHTML += `> ${msg}<br>`;
+        box.innerHTML += `> ${new Date().toLocaleTimeString()} ${msg}<br>`;
         box.scrollTop = box.scrollHeight;
-        console.log(msg);
     };
-
-    // 首先確保你有引入 Tesseract.js (用 CDN 即可)
-// <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 
     async function processAndUpload() {
         const file = document.getElementById('fileInput').files[0];
@@ -51,33 +48,42 @@
 
         const status = document.getElementById('status');
         const ocrTextElem = document.getElementById('ocrText');
-        status.innerText = "🔄 正在處理影像...";
         
-        // 1. 先壓縮並傳給 API 讓 Sharp 處理 (這步你已經通了)
-        const compressedBase64 = await compressImage(file, 1000);
-        
+        status.innerText = "🔄 影像處理中...";
+        log("開始壓縮並傳送至 Sharp API...");
+
         try {
+            // 1. 壓縮圖片
+            const compressedBase64 = await compressImage(file, 1000);
+            
+            // 2. 請求後端 Sharp 處理
             const res = await fetch('/api/test-ocr', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: compressedBase64 })
             });
-            const data = await res.json();
             
-            // 顯示 Sharp 處理後的 Debug 圖
-            const baseImgUrl = "data:image/jpeg;base64," + data.debugImages.base;
+            if (!res.ok) throw new Error("API 沒反應，請確認後端 Sharp 是否正常");
+            
+            const data = await res.json();
+            log("API 回傳成功，影像已強化");
+
             const threshImgUrl = "data:image/jpeg;base64," + data.debugImages.threshold;
-            document.getElementById('imgBase').src = baseImgUrl;
+            document.getElementById('imgBase').src = "data:image/jpeg;base64," + data.debugImages.base;
             document.getElementById('imgThreshold').src = threshImgUrl;
             document.getElementById('imgSharp').src = "data:image/jpeg;base64," + data.debugImages.sharp;
 
-            // 2. 在前端啟動 Tesseract 辨識 (使用預載語言包)
-            status.innerText = "🧠 瀏覽器正在本地辨識 (使用預載語言包)...";
-            
+            // 3. 前端 Tesseract 辨識
+            status.innerText = "🧠 本地辨識中...";
+            log("正在加載語言包: " + window.location.origin + "/tessdata");
+
             const worker = await Tesseract.createWorker('eng', 1, {
-                // 重點：指向你自己的語言包路徑
-                langPath: window.location.origin + '/tessdata', 
-                logger: m => console.log(m)
+                langPath: window.location.origin + '/tessdata',
+                logger: m => {
+                    if(m.status === 'recognizing text') {
+                        log(`辨識進度: ${(m.progress * 100).toFixed(0)}%`);
+                    }
+                }
             });
 
             await worker.setParameters({
@@ -85,21 +91,22 @@
                 tessedit_pageseg_mode: '7',
             });
 
-            // 拿 Sharp 處理後最乾淨的那張圖 (Threshold) 來辨識
+            log("執行 OCR...");
             const { data: { text } } = await worker.recognize(threshImgUrl);
             
-            ocrTextElem.innerText = text.replace(/\s+/g, '');
+            ocrTextElem.innerText = text.replace(/\s+/g, '') || "未偵測到文字";
             status.innerText = "✅ 辨識完成";
+            log("辨識成功！結果已顯示");
             
             await worker.terminate();
 
         } catch (err) {
             console.error(err);
-            status.innerText = "❌ 失敗: " + err.message;
+            log("❌ 錯誤: " + err.message);
+            status.innerText = "❌ 發生錯誤";
         }
     }
 
-    // --- 核心縮圖 Function ---
     function compressImage(file, maxWidth) {
         return new Promise((resolve) => {
             const reader = new FileReader();
@@ -110,17 +117,11 @@
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
-
-                    // 計算比例
                     const scale = maxWidth / img.width;
                     canvas.width = maxWidth;
                     canvas.height = img.height * scale;
-
-                    // 繪製縮圖
                     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                    
-                    // 轉為較小的 Base64 (品質 0.7)
-                    resolve(canvas.toDataURL('image/jpeg', 0.7));
+                    resolve(canvas.toDataURL('image/jpeg', 0.8));
                 };
             };
         });
