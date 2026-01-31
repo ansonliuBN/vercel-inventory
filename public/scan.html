@@ -66,20 +66,6 @@
 
   .pill { display:inline-block; padding:6px 10px; border-radius:999px; font-size:12px; background:#eef; color:#333; margin-top:10px; }
 
-  .debug-grid{
-    display:grid;
-    grid-template-columns: 1fr 1fr;
-    gap:10px;
-    margin-top:10px;
-  }
-  .debug-card{
-    background:#fff;
-    border:1px solid #ddd;
-    border-radius:10px;
-    padding:8px;
-  }
-  .debug-card b{ font-size:12px; color:#555; display:block; margin-bottom:6px; }
-  .debug-card img{ width:100%; border-radius:8px; border:1px solid #eee; background: #fff; }
 </style>
 </head>
 <body>
@@ -117,29 +103,6 @@
 
     <label>原始辨識全文（ZXing + OCR）：</label>
     <textarea id="rawAll" style="min-height:200px; white-space:pre-wrap;" placeholder="尚未辨識到任何文字"></textarea>
-
-    <div class="debug-grid">
-      <div class="debug-card">
-        <b>WORKCANVAS_THUMB</b>
-        <img id="imgWorkThumb" alt="work thumb">
-      </div>
-      <div class="debug-card">
-        <b>BIG_ROI（餵 ZXing 的大切圖）</b>
-        <img id="imgScanCrop" alt="scan crop">
-      </div>
-      <div class="debug-card">
-        <b>ZXING_FEED</b>
-        <img id="imgZxingFeed" alt="zxing feed">
-      </div>
-      <div class="debug-card">
-        <b>OCR_FEED_RAW</b>
-        <img id="imgOcrRaw" alt="ocr raw">
-      </div>
-      <div class="debug-card">
-        <b>OCR_FEED_ENH</b>
-        <img id="imgOcrEnh" alt="ocr enh">
-      </div>
-    </div>
 
     <label>GTIN（(01) 後 14 碼；將寫入 item_uuid）：</label>
     <input type="text" id="editGtin" placeholder="尚未偵測">
@@ -303,31 +266,8 @@
 
   async function runAnalyze({ forceOcr = false } = {}) {
     loader.style.display = "block";
-    const debug = [];
-    debug.push(`WASM_URL: /zxing_reader.wasm`);
-
-    document.getElementById('imgWorkThumb').src = canvasToPreviewURL(makeThumb(workCanvas, 420, 420));
-
-    const result = await analyzeWorkCanvas(workCanvas, {
-      forceOcr,
-      debug,
-      onBigCrop: (bigCrop) => {
-        document.getElementById('imgScanCrop').src = canvasToPreviewURL(makeThumb(bigCrop, 420, 420));
-      },
-      onZxingFeed: (feed) => {
-        document.getElementById('imgZxingFeed').src = canvasToPreviewURL(makeThumb(feed, 420, 420));
-      },
-      onOcrFeed: (feedRaw) => {
-        document.getElementById('imgOcrRaw').src = canvasToPreviewURL(makeThumb(feedRaw, 420, 420));
-      },
-      onOcrEnh: (feedEnh) => {
-        document.getElementById('imgOcrEnh').src = canvasToPreviewURL(makeThumb(feedEnh, 420, 420));
-      }
-    });
 
     const data = result.data || { gtin:"", expYYMMDD:"", expDisplay:"", lot:"" };
-
-    document.getElementById('rawAll').value =
       [
         `=== SOURCE: ${result.source} ===`,
         result.debug_text || "",
