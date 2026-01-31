@@ -1,67 +1,32 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>耗材管理系統 v2.7</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        :root { --primary: #007bff; --bg: #f4f7f9; --nav-h: 65px; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); margin: 0; overflow: hidden; }
-
-        .navbar { 
-            background: white; height: var(--nav-h); padding: 0 20px; 
-            display: flex; align-items: center; justify-content: space-between; 
-            border-bottom: 1px solid #ddd; position: fixed; top: 0; width: 100%; box-sizing: border-box; z-index: 1000; 
-        }
-        .logo { font-size: 18px; font-weight: bold; border-left: 4px solid var(--primary); padding-left: 10px; }
-        
-        /* 電腦版選單 */
-        .nav-links { display: flex; gap: 8px; }
-        .nav-btn { background: #fff; border: 1px solid #ddd; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: 0.2s; }
-        .nav-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
-
-        /* 手機漢堡選單 */
-        .burger { display: none; font-size: 28px; cursor: pointer; }
-
-        @media (max-width: 850px) {
-            .burger { display: block; }
-            .nav-links { 
-                display: none; position: absolute; top: var(--nav-h); left: 0; width: 100%; 
-                background: white; flex-direction: column; padding: 10px; border-bottom: 1px solid #ddd; 
-                box-shadow: 0 5px 15px rgba(0,0,0,0.1); 
-            }
-            .nav-links.active { display: flex; } /* 下滑顯示 */
-            .nav-btn { width: 100%; text-align: left; border: none; padding: 15px; }
-        }
-
-        /* 內容容器：左右留白 */
-        .main-wrapper { 
-            margin-top: var(--nav-h); height: calc(100vh - var(--nav-h)); padding: 20px; 
-            max-width: 1400px; margin-left: auto; margin-right: auto; box-sizing: border-box; 
-        }
-        .frame-box { width: 100%; height: 100%; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        iframe { width: 100%; height: 100%; border: none; }
+        body { font-family: sans-serif; padding: 20px; background: white; margin: 0; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .urgent { color: red; font-weight: bold; }
     </style>
 </head>
 <body>
-    <nav class="navbar" id="app-bar" style="display:none;">
-        <div class="logo">耗材管理系統</div>
-        <div class="burger" onclick="toggleMenu()">☰</div>
-        <div class="nav-links" id="menu">
-            <button class="nav-btn active" onclick="go('list.html', this)">📦 庫存總表</button>
-            <button class="nav-btn" onclick="go('scan.html', this)">✨ 新貨入庫</button>
-            <button class="nav-btn" onclick="go('transfer.html', this)">🚚 撥補發貨</button>
-            <button class="nav-btn" onclick="go('consume.html', this)">🏥 醫院領用</button>
-            <button class="nav-btn" onclick="go('hospital.html', this)">🛠️ 醫院管理</button>
-            <button onclick="logout()" style="color:red; background:none; border:none; padding:15px;">登出</button>
-        </div>
-    </nav>
-    <main class="main-wrapper" id="app-content" style="display:none;">
-        <div class="frame-box"><iframe id="sub-page" src="list.html"></iframe></div>
-    </main>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+        <h2>📦 庫存實時總表</h2>
+        <button onclick="load()">🔄 刷新</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr><th>位置</th><th>產品/序號</th><th>效期</th><th>數量</th><th>備註</th></tr>
+        </thead>
+        <tbody id="list">
+            <tr><td colspan="5" style="text-align:center;">載入中...</td></tr>
+        </tbody>
+    </table>
+
     <script>
-        // 根據 image_0550db.png 建立的比對表
         const productNames = {
             'FPSD0101': 'Surgical Equipment Drape Packs',
             'FPIR0211': 'Instrument Registration Platform Cover',
@@ -69,9 +34,10 @@
         };
 
         async function load() {
-            const { data } = await _supabase.from('inventory_summary').select('*');
-            
-            // 智慧排序：業務倉庫置頂 > 近期活躍 > 效期
+            const { data, error } = await _supabase.from('inventory_summary').select('*');
+            if (error) return console.error(error);
+
+            // 排序：業務倉庫第一 > 近期活躍 > 效期
             data.sort((a, b) => {
                 if (a.location === '業務倉庫') return -1;
                 if (b.location === '業務倉庫') return 1;
@@ -79,35 +45,29 @@
                 return new Date(a.expiry_date) - new Date(b.expiry_date);
             });
 
-            const today = new Date();
             const limitDate = new Date();
-            limitDate.setMonth(today.getMonth() + 3);
+            limitDate.setMonth(limitDate.getMonth() + 3);
 
             document.getElementById('list').innerHTML = data.map(i => {
-                // 解析產品名稱：抓取 - 前面的代碼 (例如 FPSD0101-G02 -> FPSD0101)
                 const prefix = i.product_code ? i.product_code.split('-')[0] : '';
                 const friendlyName = productNames[prefix] || i.product_code || '未知產品';
-                
-                // 效期判定
-                const expDate = new Date(i.expiry_date);
-                const isUrgent = i.expiry_date && expDate < limitDate;
+                const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
 
                 return `
                     <tr>
                         <td><b>${i.location}</b></td>
                         <td>
-                            <div style="font-weight:bold; color:#333;">${friendlyName}</div>
+                            <div style="font-weight:bold;">${friendlyName}</div>
                             <div style="font-size:11px; color:#999;">${i.item_uuid}</div>
                         </td>
-                        <td style="color:${isUrgent ? 'red' : '#333'}; font-weight:${isUrgent ? 'bold' : 'normal'}">
-                            ${i.expiry_date || '-'}
-                        </td>
+                        <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
                         <td style="text-align:center;">${i.current_stock}</td>
-                        <td style="min-width:250px; font-size:13px; color:#666;">${i.location_note || '-'}</td>
+                        <td style="font-size:12px; color:#666;">${i.location_note || '-'}</td>
                     </tr>
                 `;
             }).join('');
         }
+        load(); // 頁面載入自動執行
     </script>
 </body>
 </html>
