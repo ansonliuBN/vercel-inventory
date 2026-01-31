@@ -58,14 +58,12 @@
   .review-form { text-align: left; background: #f9f9ff; padding: 15px; border-radius: 12px; border: 2px solid #7360f2; margin-top: 15px; display: none; animation: fadeIn 0.5s; }
   @keyframes fadeIn { from {opacity:0; transform:translateY(10px);} to {opacity:1; transform:translateY(0);} }
   .review-form label { font-size: 13px; color: #555; font-weight: bold; display: block; margin-top: 10px; }
-  .review-form input, .review-form select, .review-form textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 4px; }
+  .review-form input, .review-form select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; margin-top: 4px; }
 
   .loader { display:none; margin:10px auto; width:30px; height:30px; border:3px solid #f3f3f3; border-top:3px solid #7360f2; border-radius:50%; animation:spin 1s linear infinite; }
   @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+
   canvas#workCanvas { display:none; }
-
-  .pill { display:inline-block; padding:6px 10px; border-radius:999px; font-size:12px; background:#eef; color:#333; margin-top:10px; }
-
 </style>
 </head>
 <body>
@@ -77,7 +75,7 @@
 
   <div class="btn-group" id="modeSelect">
     <button class="btn-cam" id="btnCam">📸 開啟相機</button>
-    <button class="btn-file" onclick="document.getElementById('fileInput').click()">📁 上傳照片</button>
+    <button class="btn-file" id="btnPick">📁 上傳照片</button>
   </div>
   <input type="file" id="fileInput" accept="image/*" style="display:none;">
 
@@ -96,22 +94,18 @@
   <button id="btnSnap" class="btn-snap" style="display:none;">📸 點擊拍照並分析</button>
 
   <div class="loader" id="loader"></div>
-  <div id="sourcePill" class="pill" style="display:none;"></div>
 
   <div id="reviewArea" class="review-form">
     <h3 style="margin:0; color:#7360f2; border-bottom:1px solid #ddd; padding-bottom:8px;">🔍 辨識結果確認</h3>
 
-    <label>原始辨識全文（ZXing + OCR）：</label>
-    <textarea id="rawAll" style="min-height:200px; white-space:pre-wrap;" placeholder="尚未辨識到任何文字"></textarea>
-
     <label>GTIN（(01) 後 14 碼；將寫入 item_uuid）：</label>
-    <input type="text" id="editGtin" placeholder="尚未偵測">
+    <input type="text" id="editGtin" placeholder="尚未偵測（可手動輸入）">
 
-    <label>有效日期（(17) 6 碼 → yyyy年mm月dd日）：</label>
-    <input type="text" id="editExp" placeholder="尚未偵測">
+    <label>有效日期（(17) 6 碼 → yyyy-mm-dd）：</label>
+    <input type="text" id="editExp" placeholder="尚未偵測（可手動輸入）">
 
-    <label>LOT（優先抓 (21)，抓不到用你指定的 pattern）：</label>
-    <input type="text" id="editLot" placeholder="尚未偵測">
+    <label>LOT（8碼-3碼；不完整也會先填 raw）：</label>
+    <input type="text" id="editLot" placeholder="尚未偵測（可手動輸入）">
 
     <label>入庫數量 (以 10 為單位):</label>
     <select id="editQty">
@@ -121,14 +115,13 @@
     </select>
 
     <button class="btn-import" id="btnSubmit">✅ 確認資料，匯入庫存</button>
-    <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px;">🔄 重拍一張</button>
+    <button onclick="location.reload()" style="background:#eee; color:#444; width:100%; margin-top:10px; font-size:14px;">🔄 重拍/重選</button>
   </div>
 
   <div id="status" style="margin-top:10px; font-size:13px; color:#888;"></div>
   <canvas id="workCanvas"></canvas>
 </div>
 
-<!-- 仍用你原本的 CDN -->
 <script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.1/dist/iife/reader/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@7/dist/tesseract.min.js"></script>
 
@@ -143,6 +136,7 @@
 
   const btnCam = document.getElementById('btnCam');
   const btnSnap = document.getElementById('btnSnap');
+  const btnPick = document.getElementById('btnPick');
   const fileInput = document.getElementById('fileInput');
   const btnSubmit = document.getElementById('btnSubmit');
 
@@ -152,17 +146,10 @@
   let autoTimer = null;
   let autoBusy = false;
   let autoFound = false;
-  let zxingFailCount = 0;
 
   const AUTO_INTERVAL_MS = 280;
-  const ZXING_FAIL_THRESHOLD_FOR_OCR = 3;
 
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
-  function showSourcePill(source) {
-    const pill = document.getElementById('sourcePill');
-    pill.style.display = 'inline-block';
-    pill.textContent = `SOURCE: ${source}`;
-  }
 
   function stopStream() {
     try { if (stream) stream.getTracks().forEach(t => t.stop()); } catch(e) {}
@@ -182,112 +169,65 @@
     document.getElementById('modeSelect').style.display = 'none';
     document.getElementById('btnSnap').style.display = 'none';
     document.getElementById('guidelines').style.display = 'none';
-    document.getElementById('sourcePill').style.display = 'none';
-  }
-
-  function makeThumb(canvas, maxW=420, maxH=420) {
-    const w = canvas.width, h = canvas.height;
-    const s = Math.min(maxW / w, maxH / h, 1);
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.floor(w * s));
-    c.height = Math.max(1, Math.floor(h * s));
-    const g = c.getContext("2d");
-    g.imageSmoothingEnabled = true;
-    g.fillStyle = "#fff";
-    g.fillRect(0,0,c.width,c.height);
-    g.drawImage(canvas, 0, 0, c.width, c.height);
-    return c;
-  }
-  function canvasToPreviewURL(canvas) { return canvas.toDataURL("image/png"); }
-
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = reject;
-      r.readAsDataURL(file);
-    });
-  }
-
-  async function drawBase64ToWorkCanvas(base64) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        workCanvas.width = img.width;
-        workCanvas.height = img.height;
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
-        ctx.drawImage(img, 0, 0);
-        resolve();
-      };
-      img.onerror = reject;
-      img.src = base64;
-    });
   }
 
   function hasAny(data) {
-    return !!((data?.gtin) || (data?.expDisplay) || (data?.lot));
+    return !!(data?.gtin || data?.gtin_raw || data?.exp || data?.exp_raw || data?.lot);
   }
 
   function mergeData(acc, incoming) {
-    const a = acc || { gtin:"", expDisplay:"", lot:"" };
-    const b = incoming || { gtin:"", expDisplay:"", lot:"" };
+    const a = acc || { gtin:"", exp:"", lot:"", gtin_raw:"", exp_raw:"" };
+    const b = incoming || { gtin:"", exp:"", lot:"", gtin_raw:"", exp_raw:"" };
 
-    // 合併策略：空的就補上；非空如果不一樣，選「看起來更完整」的那個
     const pick = (oldV, newV) => {
       if (!newV) return oldV;
       if (!oldV) return newV;
       if (oldV === newV) return oldV;
-      // 若不同，選更長的（通常更完整），長度一樣就用新的
       return (newV.length >= oldV.length) ? newV : oldV;
     };
 
     return {
       gtin: pick(a.gtin, b.gtin),
-      expDisplay: pick(a.expDisplay, b.expDisplay),
+      exp: pick(a.exp, b.exp),
       lot: pick(a.lot, b.lot),
+      gtin_raw: pick(a.gtin_raw, b.gtin_raw),
+      exp_raw: pick(a.exp_raw, b.exp_raw),
     };
   }
 
-  // 這一幀是否帶來「有效更新」：任一欄位有新增或變更就算 1 次
   function isMeaningfulUpdate(before, after) {
     if (!after) return false;
-    if (!before) return !!(after.gtin || after.expDisplay || after.lot);
+    if (!before) return hasAny(after);
 
-    const b = before, a = after;
-    const changed =
-      (a.gtin && a.gtin !== b.gtin) ||
-      (a.expDisplay && a.expDisplay !== b.expDisplay) ||
-      (a.lot && a.lot !== b.lot);
-
-    return changed;
+    const keys = ["gtin","exp","lot","gtin_raw","exp_raw"];
+    return keys.some(k => after[k] && after[k] !== before[k]);
   }
-  
 
   async function runAnalyze({ forceOcr = false } = {}) {
     loader.style.display = "block";
+    setStatus("⌛ 辨識中...");
 
-    const data = result.data || { gtin:"", expYYMMDD:"", expDisplay:"", lot:"" };
-      [
-        `=== SOURCE: ${result.source} ===`,
-        result.debug_text || "",
-        result.raw ? `\n[RAW_TEXT]\n${result.raw}` : ""
-      ].filter(Boolean).join("\n");
+    const debug = []; // 保留但不顯示，避免影響正式 UI
+    const result = await analyzeWorkCanvas(workCanvas, {
+      forceOcr,
+      debug,
+      // 正式版：不需要 onBigCrop/onFeed callback
+    });
 
-    showSourcePill(result.source);
+    const data = result.data || {};
 
+    // ✅ 正式填值（完整優先，抓不到就 raw 給使用者補）
     document.getElementById('editGtin').value = data.gtin || data.gtin_raw || "";
-    document.getElementById('editExp').value  = data.exp || data.exp_raw || "";
+    document.getElementById('editExp').value  = data.exp  || data.exp_raw  || "";
     document.getElementById('editLot').value  = data.lot || "";
 
-
     loader.style.display = "none";
-    document.getElementById('reviewArea').style.display = "block";
+    document.getElementById('reviewArea').style.display = 'block';
 
     setStatus(
       hasAny(data)
-        ? `✅ 已抓到部分資訊（來源：${result.source}），請複核/補齊後匯入。`
-        : `⚠️ 仍未抓到關鍵資訊，建議靠近、避反光、或改用上傳圖片。（來源：${result.source}）`
+        ? `✅ 已抓到部分資訊，請複核/補齊後匯入。`
+        : `⚠️ 未能辨識到關鍵資訊，請靠近、避反光、或改用上傳照片。`
     );
   }
 
@@ -295,14 +235,13 @@
     stopAutoTrack();
     autoBusy = false;
     autoFound = false;
-    zxingFailCount = 0;
 
-    // ✅ 新增：累積三次「有效更新」才停
-    let accData = { gtin:"", expDisplay:"", lot:"" };
-    let updateCount = 0;          // 有效更新次數
-    let noUpdateStreak = 0;       // 連續沒更新的次數（避免卡住）
-    const MAX_NO_UPDATE = 10;     // 約 10 * 280ms ~ 2.8s 沒進展就觸發 OCR 結束
-    const MAX_TOTAL_TICKS = 25;   // 約 7 秒強制結束（避免永遠跑）
+    let accData = { gtin:"", exp:"", lot:"", gtin_raw:"", exp_raw:"" };
+    let updateCount = 0;
+    let noUpdateStreak = 0;
+
+    const MAX_NO_UPDATE = 10;     // ~2.8s
+    const MAX_TOTAL_TICKS = 25;   // ~7s
     let ticks = 0;
 
     autoTimer = setInterval(async () => {
@@ -314,17 +253,16 @@
       try {
         ticks++;
 
-        // grab frame
         workCanvas.width = video.videoWidth;
         workCanvas.height = video.videoHeight;
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
         ctx.drawImage(video, 0, 0, workCanvas.width, workCanvas.height);
 
-        // ✅ 追蹤階段：只跑 ZXing（省電）
+        // 追蹤階段：只跑 ZXing（ocrAfterZxingFails=false）
         const debug = [];
         const r = await analyzeWorkCanvas(workCanvas, { forceOcr:false, ocrAfterZxingFails:false, debug });
-        const incoming = r?.data || { gtin:"", expDisplay:"", lot:"" };
+        const incoming = r?.data || {};
 
         const merged = mergeData(accData, incoming);
 
@@ -332,25 +270,15 @@
           updateCount++;
           noUpdateStreak = 0;
           accData = merged;
-
-          setStatus(`✅ 捕捉到新資訊（${updateCount}/3）：GTIN=${accData.gtin ? "✔" : "—"} EXP=${accData.expDisplay ? "✔" : "—"} LOT=${accData.lot ? "✔" : "—"}（持續追蹤補完中…）`);
+          setStatus(`🔎 自動追蹤補完中（${updateCount}/3）…`);
         } else {
           noUpdateStreak++;
-          setStatus(`🔎 自動追蹤中…（補完進度 ${updateCount}/3）距離約 20cm 很吃摩爾紋，試著微調角度/亮度/距離。`);
+          setStatus(`🔎 自動追蹤中…`);
         }
 
-        // ✅ 若已經完整（01+17 都有），不用等 3 次，直接結束（你若想「一定等 3 次」我也可以改）
-        const isComplete = !!(accData.gtin && accData.expDisplay);
-        if (isComplete) {
-          autoFound = true;
-        }
+        // ✅ 3 次有效更新就結束
+        if (updateCount >= 3) autoFound = true;
 
-        // ✅ 你的要求：跑滿 3 次「不同更新」才結束
-        if (updateCount >= 3) {
-          autoFound = true;
-        }
-
-        // ✅ 防卡：太久都沒更新，直接 OCR 結束
         const shouldForceOcrEnd = (noUpdateStreak >= MAX_NO_UPDATE) || (ticks >= MAX_TOTAL_TICKS);
 
         if (autoFound || shouldForceOcrEnd) {
@@ -362,32 +290,29 @@
           stopStream();
 
           if (shouldForceOcrEnd && updateCount < 3) {
-            // 連續沒進展 → OCR 多尺度旋轉保底
             await runAnalyze({ forceOcr:true });
           } else {
-            // ✅ 直接用 runAnalyze 再跑一次（會產生 raw/debug），並把結果顯示出來
-            // 但你要的是「合併後的 accData」更完整，所以跑完後用 accData 覆蓋欄位
+            // 跑一次正式分析（ZXing->OCR保底），再用 accData 覆蓋成累積最佳
             await runAnalyze({ forceOcr:false });
 
-            // 覆蓋成「累積的最佳結果」
-            document.getElementById('editGtin').value = accData.gtin || document.getElementById('editGtin').value;
-            document.getElementById('editExp').value  = accData.expDisplay || document.getElementById('editExp').value;
-            document.getElementById('editLot').value  = accData.lot || document.getElementById('editLot').value;
+            document.getElementById('editGtin').value =
+              accData.gtin || accData.gtin_raw || document.getElementById('editGtin').value;
 
-            setStatus(`✅ 自動補完結束（累積更新 ${updateCount}/3）。請複核/補齊後匯入。`);
+            document.getElementById('editExp').value =
+              accData.exp || accData.exp_raw || document.getElementById('editExp').value;
+
+            document.getElementById('editLot').value =
+              accData.lot || document.getElementById('editLot').value;
+
+            setStatus(`✅ 已自動補完，請複核後匯入。`);
           }
-
-          return;
         }
 
-        // ZXing fail count 仍可保留（只是提示用途）
-        zxingFailCount++;
       } finally {
         autoBusy = false;
       }
     }, AUTO_INTERVAL_MS);
   }
-
 
   async function startCamera() {
     try {
@@ -403,7 +328,7 @@
       video.style.display = 'block';
       preview.style.display = 'none';
 
-      setStatus("🔎 自動追蹤中：只跑 ZXing（快）。連續失敗 3 次→OCR 多尺度旋轉保底彈複核。也可按拍照。");
+      setStatus("🔎 自動辨識中（可按拍照強制分析）…");
       startAutoTrack();
     } catch(e) {
       alert("相機啟動失敗，請確認權限");
@@ -431,12 +356,38 @@
     await runAnalyze({ forceOcr:false });
   }
 
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+
+  async function drawBase64ToWorkCanvas(base64) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        workCanvas.width = img.width;
+        workCanvas.height = img.height;
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
+        ctx.drawImage(img, 0, 0);
+        resolve();
+      };
+      img.onerror = reject;
+      img.src = base64;
+    });
+  }
+
   async function handleFileUpload(e) {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
-    const base64 = await fileToBase64(file);
 
+    const base64 = await fileToBase64(file);
     preview.src = base64;
+
     prepareUIForAnalysis();
     stopStream();
 
@@ -447,16 +398,14 @@
   async function finalSubmit() {
     const qty = parseInt(document.getElementById('editQty').value, 10);
     const gtin = (document.getElementById('editGtin').value || "").trim();
-    const expZh = (document.getElementById('editExp').value || "").trim();
-    const lot = (document.getElementById('editLot').value || "").trim();
+    const exp  = (document.getElementById('editExp').value || "").trim();
+    const lot  = (document.getElementById('editLot').value || "").trim();
 
-    // 你要「先丟出來讓使用者補」：所以不強制全部有值
-    // 但至少 GTIN 建議要有（因為你說 item_uuid 放 GTIN）
-    if (!gtin) { alert("❗ 建議至少補上 GTIN（(01)後14碼）再匯入"); return; }
+    if (!gtin) { alert("❗ 請至少補上 GTIN（(01) 後 14 碼）再匯入"); return; }
 
     const payload = {
       item_uuid: gtin,
-      expiry_date: expZh,
+      expiry_date: exp,
       lot: lot,
       quantity: qty,
       from_loc: 'FACTORY',
@@ -481,6 +430,7 @@
     }
   }
 
+  btnPick.addEventListener("click", () => fileInput.click());
   btnCam.addEventListener("click", startCamera);
   btnSnap.addEventListener("click", takeSnapshot);
   fileInput.addEventListener("change", handleFileUpload);
