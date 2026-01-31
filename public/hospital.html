@@ -4,85 +4,98 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 15px; background: #f4f7f9; margin: 0; }
-        .flex-grid { display: flex; gap: 20px; flex-wrap: wrap; }
-        .panel { background: white; padding: 20px; border-radius: 12px; flex: 1; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .loc-tag { background: #e7f3ff; padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #b3d7ff; }
-        .stock-row { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
-        input[type="number"] { width: 50px; text-align: center; }
-        input[type="text"] { width: 100px; }
-        .btn-blue { background: #007bff; color: white; border: none; padding: 10px; border-radius: 6px; width: 100%; cursor: pointer; }
+        body { font-family: sans-serif; padding: 20px; background: #f4f7f9; }
+        .flex-row { display: flex; gap: 20px; flex-wrap: wrap; }
+        .side-panel { background: white; padding: 20px; border-radius: 12px; flex: 1; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        .loc-tag { background: #e7f3ff; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #b3d7ff; }
+        .item-card { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
+        .item-card:last-child { border-bottom: none; }
+        input[type="number"] { width: 50px; padding: 5px; text-align: center; border: 1px solid #ddd; border-radius: 4px; }
+        input[type="text"] { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <div class="flex-grid">
-        <div class="panel" style="max-width: 400px;">
-            <h3>📍 位置與提醒</h3>
-            <div class="loc-tag">偵測位置：<b id="cur-loc" style="color:#007bff;">定位中...</b></div>
-            <select id="loc-sel" style="width:100%; padding:8px;" onchange="sync()"></select>
-            <textarea id="note-in" style="width:100%; height:100px; margin-top:15px; padding:10px; box-sizing:border-box;" placeholder="寫下要提醒業務的話..."></textarea>
-            <button class="btn-blue" onclick="saveNote()" style="margin-top:10px;">儲存備註</button>
+    <div class="flex-row">
+        <div class="side-panel" style="max-width: 450px;">
+            <h3>📍 位置與提醒管理</h3>
+            <div class="loc-tag">
+                目前定位：<b id="cur-loc" style="color:#007bff;">偵測中...</b>
+                <select id="loc-sel" style="width:100%; margin-top:10px; padding:8px;" onchange="sync()"></select>
+            </div>
+            <label>📝 撥補/領用提醒事項：</label>
+            <textarea id="note-in" style="width:100%; height:120px; margin-top:10px; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;"></textarea>
+            <button onclick="saveNote()" style="width:100%; background:#007bff; color:white; border:none; padding:12px; border-radius:8px; margin-top:10px; font-weight:bold; cursor:pointer;">儲存備註</button>
         </div>
 
-        <div class="panel">
-            <h3>⚽ 醫院固定庫存</h3>
+        <div class="side-panel">
+            <h3>⚽ 醫院固定庫存 (感光球 / Fiducial)</h3>
             <div id="fix-list"></div>
-            <hr>
-            <p style="font-size:13px; color:#999;">新增自定義項：</p>
-            <div style="display:flex; gap:5px;">
-                <input type="text" id="new-name" placeholder="品名">
-                <input type="text" id="new-unit" placeholder="單位" value="個" style="width:50px;">
-                <button onclick="addOther()">新增</button>
+            <div style="margin-top:20px; padding-top:15px; border-top:2px dashed #eee;">
+                <label style="font-size:13px; color:#999;">新增其他耗材：</label>
+                <div style="display:flex; gap:8px; margin-top:8px;">
+                    <input type="text" id="new-name" placeholder="品名" style="flex:2;">
+                    <input type="text" id="new-unit" placeholder="單位" value="個" style="flex:1;">
+                    <button onclick="addOther()" style="padding:8px 15px;">新增</button>
+                </div>
             </div>
         </div>
     </div>
 
 <script>
-    const builtInItems = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
+    const builtInNames = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
 
     async function init() {
         const { data: locs } = await _supabase.from('locations').select('*');
         const sel = document.getElementById('loc-sel');
         locs.forEach(l => sel.add(new Option(l.name, l.name)));
 
-        // 使用共享定位功能
-        navigator.geolocation.getCurrentPosition(async (pos) => {
-            const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
-            if (nearest) {
-                sel.value = nearest.name;
-                sync();
-            }
-        });
+        // 使用與領用頁面一致的定位邏輯
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+                if (nearest) {
+                    sel.value = nearest.name;
+                    sync();
+                }
+            }, () => { document.getElementById('cur-loc').innerText = "定位失敗，請手動選擇"; });
+        }
     }
 
     async function sync() {
-        const loc = document.getElementById('loc-sel').value;
-        document.getElementById('cur-loc').innerText = loc;
-        const { data: lData } = await _supabase.from('locations').select('note').eq('name', loc).single();
+        const locName = document.getElementById('loc-sel').value;
+        document.getElementById('cur-loc').innerText = locName;
+        
+        const { data: lData } = await _supabase.from('locations').select('note').eq('name', locName).single();
         document.getElementById('note-in').value = lData?.note || '';
-        loadStock(loc);
+        
+        loadStock(locName);
     }
 
     async function loadStock(loc) {
         const { data } = await _supabase.from('hospital_stock').select('*').eq('location_name', loc);
-        const container = document.getElementById('fix-list');
+        const list = document.getElementById('fix-list');
         
-        let html = builtInItems.map(name => {
+        // 渲染邏輯：內建品項優先顯示 (若資料庫沒資料則顯示 0)
+        let html = builtInNames.map(name => {
             const db = data?.find(d => d.item_name === name);
             return renderRow(name, db?.quantity || 0, db?.unit || '個', db?.updated_at);
         }).join('');
 
-        const others = data?.filter(d => !builtInItems.includes(d.item_name)) || [];
+        // 渲染其他品項
+        const others = data?.filter(d => !builtInNames.includes(d.item_name)) || [];
         html += others.map(d => renderRow(d.item_name, d.quantity, d.unit, d.updated_at)).join('');
-        container.innerHTML = html;
+        list.innerHTML = html;
     }
 
     function renderRow(name, qty, unit, time) {
         return `
-            <div class="stock-row">
-                <div><b>${name}</b><br><small style="color:#bbb">${time ? new Date(time).toLocaleString() : '未更新'}</small></div>
+            <div class="item-card">
                 <div>
-                    <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}')"> ${unit}
+                    <b>${name}</b><br>
+                    <small style="color:#bbb;">${time ? '最後更新: ' + new Date(time).toLocaleString() : '尚未更新'}</small>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}')"> <span>${unit}</span>
                 </div>
             </div>`;
     }
@@ -92,18 +105,19 @@
         await _supabase.from('hospital_stock').upsert({
             location_name: loc, item_name: name, quantity: qty, unit: unit, updated_at: new Date()
         }, { onConflict: 'location_name, item_name' });
-        loadStock(loc);
+        loadStock(loc); // 刷新
     }
 
     async function addOther() {
-        const n = document.getElementById('new-name').value;
-        const u = document.getElementById('new-unit').value;
-        if(n) await updateQty(n, 0, u);
+        const name = document.getElementById('new-name').value;
+        const unit = document.getElementById('new-unit').value;
+        if (name) await updateQty(name, 0, unit);
     }
 
     async function saveNote() {
-        await _supabase.from('locations').update({ note: document.getElementById('note-in').value }).eq('name', document.getElementById('loc-sel').value);
-        alert("儲存成功");
+        const loc = document.getElementById('loc-sel').value;
+        await _supabase.from('locations').update({ note: document.getElementById('note-in').value }).eq('name', loc);
+        alert("備註存好了！");
     }
     init();
 </script>
