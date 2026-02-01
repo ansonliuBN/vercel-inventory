@@ -4,121 +4,105 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 15px; background: #f8f9fa; }
+        body { font-family: -apple-system, sans-serif; padding: 15px; background: #f8f9fa; }
         .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
         .loc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px; }
         .loc-item { background: #fff; border: 1px solid #ddd; padding: 10px; border-radius: 8px; }
         select { width: 100%; padding: 10px; margin-top: 5px; border-radius: 5px; border: 1px solid #ccc; }
-        .item-row { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; gap: 10px; }
+        .item-row { display: flex; align-items: center; padding: 15px 0; border-bottom: 1px solid #eee; gap: 10px; }
         .btn-submit { width: 100%; padding: 16px; background: #007bff; color: white; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; margin-top: 20px; cursor: pointer; }
+        #inventory-list { max-height: 500px; overflow-y: auto; }
     </style>
 </head>
 <body>
     <div class="card">
-        <h3>🚚 物料撥補發貨</h3>
+        <h3>🚚 物料撥補發貨 (序號追蹤)</h3>
         
         <div class="loc-grid">
             <div class="loc-item" style="border-left: 5px solid #007bff;">
-                <label>📤 <b>來源位置</b> (預設自動定位)</label>
+                <label>📤 <b>來源位置</b></label>
                 <select id="from-loc" onchange="loadFromInventory()"></select>
-                <small id="gps-status" style="color: #28a745; font-size: 11px;">定位中...</small>
             </div>
-
             <div class="loc-item" style="border-left: 5px solid #28a745;">
-                <label>📥 <b>撥補目標</b> (請手動選擇)</label>
-                <select id="to-loc">
-                    <option value="">-- 請選擇收貨醫院 --</option>
-                </select>
+                <label>📥 <b>撥補目標</b></label>
+                <select id="to-loc"></select>
             </div>
         </div>
 
-        <div id="inventory-list">請選擇來源位置以讀取清單...</div>
+        <div id="inventory-list">請選擇來源位置...</div>
         
         <button class="btn-submit" onclick="submitTransfer()">確認撥補發貨</button>
     </div>
 
 <script>
-    const fromSel = document.getElementById('from-loc');
-    const toSel = document.getElementById('to-loc');
-
     async function init() {
         const { data: locs } = await _supabase.from('locations').select('*');
+        const fromSel = document.getElementById('from-loc');
+        const toSel = document.getElementById('to-loc');
         
-        // 填入所有下拉選單
         locs.forEach(l => {
             fromSel.add(new Option(l.name, l.name));
             toSel.add(new Option(l.name, l.name));
         });
 
-        // 1. 來源位置使用共用定位功能
+        // 自動定位來源
         navigator.geolocation.getCurrentPosition(async (pos) => {
             const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
             if (nearest) {
                 fromSel.value = nearest.name;
-                document.getElementById('gps-status').innerText = "📍 已自動定位最近位置";
                 loadFromInventory();
             }
-        }, () => {
-            document.getElementById('gps-status').innerText = "⚠️ 定位失敗，請手動選擇來源";
         });
     }
 
-    // 2. 讀取該來源地點目前的庫存
-    // 修改 transfer.html 裡的渲染邏輯
     async function loadFromInventory() {
-        const loc = fromSel.value;
-        const { data } = await _supabase.from('inventory_summary').select('*').eq('location', loc);
+        const loc = document.getElementById('from-loc').value;
+        const listDiv = document.getElementById('inventory-list');
+        listDiv.innerHTML = "讀取中...";
+
+        // 💡 關鍵：對應 SQL 視圖中的 current_stock
+        const { data, error } = await _supabase.from('inventory_summary').select('*').eq('location', loc);
         
-        document.getElementById('inventory-list').innerHTML = data.map(i => `
+        if (!data || data.length === 0) {
+            listDiv.innerHTML = `<p style="color:#999; text-align:center; padding:20px;">此地點目前無在庫物料</p>`;
+            return;
+        }
+
+        listDiv.innerHTML = data.map(i => `
             <div class="item-row">
-                <input type="checkbox" name="move" value="${i.item_uuid}" data-code="${i.product_code}" data-exp="${i.expiry_date || ''}" style="zoom:1.5">
+                <input type="checkbox" name="move" value="${i.item_uuid}" 
+                       data-code="${i.product_code || ''}" 
+                       data-exp="${i.expiry_date || ''}" 
+                       style="zoom:1.5">
                 <div style="flex:1;">
                     <b>${i.friendly_name || i.product_code}</b><br>
-                    <small>產品: ${i.friendly_name || i.product_code} | 在庫: ${i.total_stock}</small>
-                </div>
-                數量: <input type="number" 
-                            id="qty-${i.item_uuid}" 
-                            value="1" 
-                            min="1" 
-                            max="${i.total_stock}" 
-                            oninput="if(value > ${i.total_stock}) value = ${i.total_stock}; if(value < 1) value = 1;"
-                            style="width:60px; padding:5px; border:1px solid #ccc; border-radius:4px;">
+                    <small style="color:#666;">SN: ${i.item_uuid} | 效期: ${i.expiry_date || '-'}</small><br>
+                    <small style="color:#007bff;">目前在庫: ${i.current_stock}</small> </div>
+                數量: <input type="number" id="qty-${i.item_uuid}" value="1" min="1" max="${i.current_stock}" 
+                            oninput="if(value > ${i.current_stock}) value = ${i.current_stock}; if(value < 1) value = 1;"
+                            style="width:50px; padding:5px; border-radius:4px; border:1px solid #ddd;">
             </div>
-        `).join('') || "此地點目前沒貨";
+        `).join('');
     }
 
-    // 3. 提交撥補
     async function submitTransfer() {
         const checked = document.querySelectorAll('input[name="move"]:checked');
-        const source = fromSel.value;
-        const target = toSel.value;
+        const source = document.getElementById('from-loc').value;
+        const target = document.getElementById('to-loc').value;
 
-        if (!target || source === target) return alert("請選擇正確的撥補目標(且不能與來源相同)");
-        if (checked.length === 0) return alert("請勾選要撥補的物料");
+        if (checked.length === 0) return alert("請勾選物料");
+        if (!target || source === target) return alert("請選擇正確的目標地點");
+
+        if (!confirm(`確定撥補這 ${checked.length} 項物料嗎？`)) return;
 
         for (let el of checked) {
             const uuid = el.value;
-            const inputField = document.getElementById('qty-' + uuid);
             const qty = document.getElementById('qty-' + uuid).value;
-            const maxQty = parseInt(inputField.max);
-            // 💡 關鍵：從 checkbox 身上抓回原本的質
-            const originalCode = el.dataset.code; 
-            const originalExp = el.dataset.exp;
-
-            if (qty > maxQty) {
-                alert(`【錯誤】${uuid} 的撥補數量 (${qty}) 超過了在庫數量 (${maxQty})！`);
-                inputField.value = maxQty; // 幫他改回正確的
-                return; // 終止發送
-            }
             
-            if (qty < 1 || isNaN(qty)) {
-                alert(`【錯誤】${uuid} 的數量不正確！`);
-                return;
-            }
+            // 💡 抓取 checkbox 身上帶著的「質」
+            const product_code = el.dataset.code;
+            const expiry_date = el.dataset.exp;
 
-            // 通過檢查才開始發送 API
-            if (!confirm(`確定要從 ${source} 撥補 ${checked.length} 項物料到 ${target} 嗎？`)) return;
-            
             await fetch('/api/stock', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -127,16 +111,15 @@
                     from_loc: source,
                     to_loc: target,
                     quantity: parseInt(qty),
-                    operator: localStorage.getItem('user_email'),
-                    product_code: originalCode, // 從標籤抓回代碼
-                    expiry_date: originalExp    // 從標籤抓回效期
+                    product_code,
+                    expiry_date,
+                    operator: localStorage.getItem('user_email')
                 })
             });
         }
         alert("撥補完成！");
         location.reload();
     }
-
     init();
 </script>
 </body>

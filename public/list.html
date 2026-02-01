@@ -280,14 +280,25 @@
     );
 
     // 排序：位置 → 產品
-    summary.sort((a,b) => {
-        const locCmp = String(a.location||'').localeCompare(String(b.location||''), 'zh-Hant');
-        if (locCmp !== 0) return locCmp;
+    summary.sort((a, b) => {
+      const aBiz = a.location === '業務倉庫';
+      const bBiz = b.location === '業務倉庫';
 
-        const nameA = a.friendly_name || a.product_code || '';
-        const nameB = b.friendly_name || b.product_code || '';
-        return String(nameA).localeCompare(String(nameB), 'zh-Hant');
+      // ✅ 業務倉庫永遠第一
+      if (aBiz && !bBiz) return -1;
+      if (!aBiz && bBiz) return 1;
+
+      // 其它 location 正常排序
+      const locCmp = String(a.location || '')
+        .localeCompare(String(b.location || ''), 'zh-Hant');
+      if (locCmp !== 0) return locCmp;
+
+      // 同 location 內照產品名
+      const nameA = a.friendly_name || a.product_code || '';
+      const nameB = b.friendly_name || b.product_code || '';
+      return String(nameA).localeCompare(String(nameB), 'zh-Hant');
     });
+
 
     const limitDate = new Date();
     limitDate.setMonth(limitDate.getMonth() + 3);
