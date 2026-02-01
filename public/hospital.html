@@ -86,10 +86,10 @@
             placeholder="數量"
             style="width:110px;"
             title="提示數量（新增時直接帶入）">
-          <div class="muted small" id="pending-hint" style="margin-top:6px;">
-            目前未儲存：0 筆
-          </div>
           <button class="btn-light" onclick="addOther()">新增</button>
+        </div>
+        <div class="muted small" id="pending-hint" style="margin-top:6px;">
+          目前未儲存：0 筆
         </div>
         <div class="muted small" style="margin-top:8px;">
           新增後會在該地點建立 current（數量=0），並寫入 log。
@@ -117,19 +117,18 @@
 
 
   function nowIso() { return new Date().toISOString(); }
-  function fmtTime(t) { return t ? new Date(time).toLocaleString('zh-TW', {hour12: false}) : '無'; }
-
-  async function requireUserId() {
-    const { data, error } = await _supabase.auth.getUser();
-    if (error) console.warn(error);
-    const user = data?.user;
-    if (!user?.id) {
-      alert("請先登入（Supabase Auth），才可以寫入資料。");
-      throw new Error("Not logged in");
-    }
-    document.getElementById('cur-user').innerText = user.id;
-    return user.id;
+  function fmtTime(t) { 
+    return t ? new Date(t).toLocaleString('zh-TW', { hour12: false }) : '無'; 
   }
+
+
+async function requireUserId() {
+  const { data } = await _supabase.auth.getUser();
+  const user = data?.user;
+  if (!user?.id) throw new Error("Not logged in");
+  return user.id;
+}
+
 
   // ====== 初始化 ======
   async function init() {
@@ -206,7 +205,7 @@
     }).join('');
 
     // 其他品項
-    const others = (data || []).filter(d => !builtInNames.includes(d.item_name));
+    const others = safeData.filter(d => !builtInNames.includes(d.item_name));
     html += others.map(d => renderStockRow(d)).join('');
 
     list.innerHTML = html;
@@ -226,7 +225,7 @@
           <b>${name}</b>
           <div class="qty-controls">
             <button onclick="adjustQty(decodeURIComponent('${safeName}'), -1)">−</button>
-            <input type="number" value="${qty}" onchange="setQty('${escAttr(d.item_name)}', this.value)">
+            <input type="number" value="${qty}" onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
             <button onclick="adjustQty(decodeURIComponent('${safeName}'), 1)">+</button>
           </div>
         </div>
@@ -236,7 +235,7 @@
             value="${note}"
             style="width:50%;"
             placeholder="輸入品項備註（如：放在第三抽屜）"
-            onchange="setItemNote('${escAttr(d.item_name)}', this.value)"
+            onchange="setItemNote(decodeURIComponent('${safeName}'), this.value)"
           />
         </div>
 
@@ -265,11 +264,11 @@
     return data || null;
   }
 
-  async function upsertCurrentStock(loc, itemName, quantity, note, operatorUserId) {
+  async function upsertCurrentStock(loc, itemName, quantity, note, operator) {
     const payload = {
       location_name: loc,
       item_name: itemName,
-      quantity: quantity,
+      quantity,
       note: note ?? null,
       updated_at: nowIso(),
       operator: operator
@@ -282,11 +281,12 @@
     if (error) throw error;
   }
 
-  async function insertStockLog(loc, itemName, action, beforeQty, afterQty, beforeNote, afterNote, operatorUserId) {
+
+  async function insertStockLog(loc, itemName, action, beforeQty, afterQty, beforeNote, afterNote, operator) {
     const payload = {
       location_name: loc,
       item_name: itemName,
-      action: action,
+      action,
       qty_before: beforeQty ?? null,
       qty_after: afterQty ?? null,
       note_before: beforeNote ?? null,
@@ -294,10 +294,10 @@
       operator: operator,
       created_at: nowIso()
     };
-
     const { error } = await _supabase.from('hospital_stock_log').insert(payload);
     if (error) throw error;
   }
+
 
   function setQty(itemName, newQtyRaw) {
     let newQty = Number(newQtyRaw);
@@ -512,7 +512,10 @@
       <div class="reminder-card">
         <div class="muted small">更新：${time}　｜　更新者：${op}</div>
         <div style="margin-top:8px;">
-          <input type="text" id="reminder-${id}" value="${content}">
+          <input type="number"
+            data-item="${escAttr(d.item_name)}"
+            value="${qty}"
+            onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
         </div>
         <div class="reminder-actions">
           <button class="btn-light" onclick="updateReminder('${id}')">更新</button>
@@ -533,7 +536,7 @@
     return data || null;
   }
 
-  async function insertReminderLog(loc, action, beforeContent, afterContent, operatorUserId) {
+  async function insertReminderLog(loc, action, beforeContent, afterContent, operator) {
     const payload = {
       location_name: loc,
       action: action,
@@ -569,7 +572,7 @@
     }
 
     // log
-    await insertReminderLog(loc, 'create', null, content, operatorUserId);
+    await insertReminderLog(loc, 'create', null, content, operator);
 
     document.getElementById('reminder-new').value = '';
     await loadReminders(loc);
@@ -606,7 +609,7 @@
     }
 
     // log
-    await insertReminderLog(loc, 'update', before, newContent, operatorUserId);
+    await insertReminderLog(loc, 'update', before, newContent, operator);
 
     await loadReminders(loc);
   }
@@ -635,14 +638,13 @@
     }
 
     // log
-    await insertReminderLog(loc, 'hide', before, null, operatorUserId);
+    await insertReminderLog(loc, 'hide', before, null, operator);
 
     await loadReminders(loc);
   }
 
   // ====== 啟動 ======
   init();
-  sync();
 </script>
 </body>
 </html>
