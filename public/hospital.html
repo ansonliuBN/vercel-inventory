@@ -15,6 +15,15 @@
     .muted { color:#888; font-size:12px; }
     input[type="number"] { width: 70px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; }
     input[type="text"] { padding: 8px; border: 1px solid #ddd; border-radius: 6px; width:100%; box-sizing:border-box; }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input[type=number] {
+      -moz-appearance: textfield;
+      appearance: textfield;
+    }
     button { cursor:pointer; border-radius: 8px; border: none; padding: 8px 10px; }
     .btn-primary { background:#007bff; color:#fff; font-weight:700; }
     .btn-light { background:#f1f3f5; color:#333; border:1px solid #e9ecef; }
@@ -68,9 +77,6 @@
       <button class="btn-primary" style="width:100%; margin: 10px 0;" onclick="commitStockChanges()">
         更新（儲存所有變更）
       </button>
-      <div class="muted small" id="pending-hint" style="margin-top:6px;">
-        目前未儲存：0 筆
-      </div>
 
       <div style="margin-top:18px; padding-top:15px; border-top:2px dashed #eee;">
         <label class="muted">新增其他耗材（自由輸入 item_name）：</label>
@@ -81,6 +87,9 @@
             onchange="setQty('${escAttr(d.item_name)}', this.value)">
 
           <input type="text" id="new-name" placeholder="品名（例如：鑽頭套件）" style="flex:2;">
+                    <div class="muted small" id="pending-hint" style="margin-top:6px;">
+            目前未儲存：0 筆
+          </div>
           <button class="btn-light" onclick="addOther()">新增</button>
         </div>
         <div class="muted small" style="margin-top:8px;">
@@ -212,15 +221,17 @@
     const note = esc(d.note ?? '');
     const time = fmtTime(d.updated_at);
     const op = d.operator_user_id ? esc(d.operator_user_id) : '-';
+    const safeName = encodeURIComponent(d.item_name);
+
 
     return `
       <div class="row" data-row="${escAttr(d.item_name)}">
         <div class="row-top">
           <b>${name}</b>
           <div class="qty-controls">
-            <button class="qty-btn" title="-1" onclick="adjustQty('${escAttr(d.item_name)}', -1)">−</button>
+            <button onclick="adjustQty(decodeURIComponent('${safeName}'), -1)">−</button>
             <input type="number" value="${qty}" onchange="setQty('${escAttr(d.item_name)}', this.value)">
-            <button class="qty-btn" title="+1" onclick="adjustQty('${escAttr(d.item_name)}', 1)">+</button>
+            <button onclick="adjustQty(decodeURIComponent('${safeName}'), 1)">+</button>
           </div>
         </div>
 
@@ -390,7 +401,7 @@
       .from('hospital_stock_current')
       .upsert(upserts, { onConflict: 'location_name,item_name' });
 
-    if (upErr) { console.error(upErr); alert('更新 current 失敗'); return; }
+    if (upErr) { console.error(upErr); alert('更新 current 失敗：' + (upErr.message || JSON.stringify(upErr))); return; }
 
     // 4) 一次 insert log
     const { error: logErr } = await _supabase
@@ -432,23 +443,40 @@
     if (!name) return;
 
     const loc = document.getElementById('loc-sel').value;
-    const operator = getOperator();
+    const operator = getOperator(); // 你用 localStorage user_email 的那個
 
-    const cur = await getCurrentStockRow(loc, name);
-    if (cur) {
-      alert("此品項已存在於該地點。");
-      return;
+    // 可選：讓新增就能輸入數量（如果你有 new-qty）
+    const qtyInput = document.getElementById('new-qty');
+    let qty = qtyInput ? Number(qtyInput.value || 0) : 0;
+    if (!Number.isFinite(qty) || qty < 0) qty = 0;
+
+    try {
+      // 1) 先看 DB 裡有沒有這個品項（避免重複新增）
+      const cur = await getCurrentStockRow(loc, name); // 你應該已經有這個 helper
+      if (cur) {
+        alert("此品項已存在於該地點。");
+        return;
+      }
+
+      // 2) 直接寫 current（新增是低頻，直接寫沒問題）
+      await upsertCurrentStock(loc, name, qty, '', operator);
+
+      // 3) 直接寫 log（before=null, after=qty）
+      await insertStockLog(loc, name, 'set', null, qty, null, null, operator);
+
+      // 4) 清空輸入欄位
+      document.getElementById('new-name').value = '';
+      if (qtyInput) qtyInput.value = '';
+
+      // 5) 重新讀 DB 刷新顯示（會看到更新時間/更新者）
+      await loadStock(loc);
+
+    } catch (e) {
+      console.error(e);
+      alert("新增品項失敗：" + (e?.message || JSON.stringify(e)));
     }
-
-    const qty = Number(document.getElementById('new-qty').value || 0);
-    await upsertCurrentStock(loc, name, qty, '', operator);
-    await insertStockLog(loc, name, 'set', null, qty, null, null, operator);
-
-    document.getElementById('new-name').value = '';
-    document.getElementById('new-qty').value = '';
-
-    await loadStock(loc);
   }
+
 
   // ====== 提醒事項：讀取 ======
   async function loadReminders(loc) {
@@ -536,7 +564,7 @@
     const { error } = await _supabase.from('location_reminder_current').insert(payload);
     if (error) {
       console.error(error);
-      alert("新增提醒失敗，請檢查 RLS。");
+      alert("新增提醒失敗：" + (error?.message || JSON.stringify(error)));
       return;
     }
 
