@@ -194,7 +194,7 @@ async function requireUserId() {
 
     // 內建優先顯示（沒有就顯示 0）
     let html = builtInNames.map(name => {
-      const db = (data || []).find(d => d.item_name === name);
+      const db = safeData.find(d => d.item_name === name);
       return renderStockRow({
         item_name: name,
         quantity: db?.quantity ?? 0,
@@ -225,7 +225,10 @@ async function requireUserId() {
           <b>${name}</b>
           <div class="qty-controls">
             <button onclick="adjustQty(decodeURIComponent('${safeName}'), -1)">−</button>
-            <input type="number" value="${qty}" onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
+            <input type="number"
+              data-item="${escAttr(d.item_name)}"
+              value="${qty}"
+              onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
             <button onclick="adjustQty(decodeURIComponent('${safeName}'), 1)">+</button>
           </div>
         </div>
@@ -432,8 +435,12 @@ async function requireUserId() {
 
   // 避免 itemName 有特殊字元造成 querySelector 爆
   function cssEscape(s) {
-    return String(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    return String(s ?? '')
+      .replaceAll('\\', '\\\\')
+      .replaceAll('"', '\\"')
+      .replaceAll("'", "\\'");
   }
+
 
 
 
@@ -512,10 +519,7 @@ async function requireUserId() {
       <div class="reminder-card">
         <div class="muted small">更新：${time}　｜　更新者：${op}</div>
         <div style="margin-top:8px;">
-          <input type="number"
-            data-item="${escAttr(d.item_name)}"
-            value="${qty}"
-            onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
+          <input type="text" id="reminder-${id}" value="${content}">
         </div>
         <div class="reminder-actions">
           <button class="btn-light" onclick="updateReminder('${id}')">更新</button>
@@ -524,6 +528,7 @@ async function requireUserId() {
       </div>
     `;
   }
+
 
   // ====== 提醒事項：寫入（Current + Log） ======
   async function getReminderRowById(id) {
