@@ -1,142 +1,525 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js"></script>
-    <style>
-        body { font-family: sans-serif; padding: 20px; background: #f4f7f9; }
-        .flex-row { display: flex; gap: 20px; flex-wrap: wrap; }
-        .side-panel { background: white; padding: 20px; border-radius: 12px; flex: 1; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
-        .loc-tag { background: #e7f3ff; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #b3d7ff; }
-        .item-card { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid #eee; }
-        .item-card:last-child { border-bottom: none; }
-        input[type="number"] { width: 50px; padding: 5px; text-align: center; border: 1px solid #ddd; border-radius: 4px; }
-        input[type="text"] { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-    </style>
-</head>
-<body>
-    <div class="flex-row">
-        <div class="side-panel" style="max-width: 450px;">
-            <h3>📍 位置與提醒管理</h3>
-            <div class="loc-tag">
-                目前定位：<b id="cur-loc" style="color:#007bff;">偵測中...</b>
-                <select id="loc-sel" style="width:100%; margin-top:10px; padding:8px;" onchange="sync()"></select>
-            </div>
-            <label>📝 撥補/領用提醒事項：</label>
-            <textarea id="note-in" style="width:100%; height:120px; margin-top:10px; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;"></textarea>
-            <button onclick="saveNote()" style="width:100%; background:#007bff; color:white; border:none; padding:12px; border-radius:8px; margin-top:10px; font-weight:bold; cursor:pointer;">儲存備註</button>
-        </div>
+  <meta charset="utf-8" />
+  <title>固定庫存 + 提醒事項（Current + Log）</title>
 
-        <div class="side-panel">
-            <h3>⚽ 醫院固定庫存 (感光球 / Fiducial)</h3>
-            <div id="fix-list"></div>
-            <div style="margin-top:20px; padding-top:15px; border-top:2px dashed #eee;">
-                <label style="font-size:13px; color:#999;">新增其他耗材：</label>
-                <div style="display:flex; gap:8px; margin-top:8px;">
-                    <input type="text" id="new-name" placeholder="品名" style="flex:2;">
-                    <input type="text" id="new-unit" placeholder="單位" value="個" style="flex:1;">
-                    <button onclick="addOther()" style="padding:8px 15px;">新增</button>
-                </div>
-            </div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase-config.js"></script>
+
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #f4f7f9; }
+    .flex-row { display: flex; gap: 20px; flex-wrap: wrap; }
+    .side-panel { background: white; padding: 20px; border-radius: 12px; flex: 1; min-width: 320px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+    .loc-tag { background: #e7f3ff; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #b3d7ff; }
+    .muted { color:#888; font-size:12px; }
+    input[type="number"] { width: 70px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; }
+    input[type="text"] { padding: 8px; border: 1px solid #ddd; border-radius: 6px; width:100%; box-sizing:border-box; }
+    button { cursor:pointer; border-radius: 8px; border: none; padding: 8px 10px; }
+    .btn-primary { background:#007bff; color:#fff; font-weight:700; }
+    .btn-light { background:#f1f3f5; color:#333; border:1px solid #e9ecef; }
+    .btn-danger { background:#ffe3e3; color:#c92a2a; border:1px solid #ffc9c9; }
+    .row { border-bottom: 1px solid #eee; padding: 14px 0; }
+    .row:last-child { border-bottom:none; }
+    .row-top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .qty-controls { display:flex; align-items:center; gap:8px; }
+    .qty-btn { width:34px; height:34px; border-radius:10px; font-weight:900; background:#f1f3f5; border:1px solid #e9ecef; }
+    .small { font-size: 12px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#f1f3f5; border:1px solid #e9ecef; font-size:12px; color:#666; }
+
+    .reminder-card { border:1px solid #eee; border-radius:10px; padding:12px; margin:10px 0; }
+    .reminder-actions { display:flex; gap:8px; margin-top:8px; justify-content:flex-end; }
+    textarea { width:100%; min-height:90px; padding:10px; border:1px solid #ddd; border-radius:10px; box-sizing:border-box; }
+  </style>
+</head>
+
+<body>
+  <div class="flex-row">
+    <!-- 左側：位置 + 提醒事項 -->
+    <div class="side-panel" style="max-width: 520px;">
+      <h3>📍 位置與提醒事項</h3>
+
+      <div class="loc-tag">
+        目前定位：<b id="cur-loc" style="color:#007bff;">偵測中...</b>
+        <select id="loc-sel" style="width:100%; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #cfe3ff;" onchange="sync()"></select>
+        <div class="muted" style="margin-top:8px;">
+          使用者：<span id="cur-user">未登入</span>
         </div>
+      </div>
+
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <h4 style="margin:0;">📝 提醒事項（可多筆）</h4>
+        <span class="pill">前台刪除＝隱藏</span>
+      </div>
+
+      <div id="reminder-list" style="margin-top:12px;"></div>
+
+      <div style="margin-top:14px; padding-top:14px; border-top:2px dashed #eee;">
+        <label class="muted">新增提醒：</label>
+        <textarea id="reminder-new" placeholder="例如：下週要補感光球到 20 顆；或：這批 fiducial 放在第三抽屜"></textarea>
+        <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="addReminder()">新增提醒</button>
+      </div>
     </div>
 
+    <!-- 右側：固定庫存 -->
+    <div class="side-panel">
+      <h3>⚽ 醫院固定庫存</h3>
+      <div class="muted" style="margin-top:-6px;">支援：直接設定數量 + 快速 +/-；備註可輸入「放哪裡」等。</div>
+
+      <div id="fix-list" style="margin-top:10px;"></div>
+
+      <div style="margin-top:18px; padding-top:15px; border-top:2px dashed #eee;">
+        <label class="muted">新增其他耗材（自由輸入 item_name）：</label>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <input type="text" id="new-name" placeholder="品名（例如：鑽頭套件）" style="flex:2;">
+          <button class="btn-light" onclick="addOther()">新增</button>
+        </div>
+        <div class="muted small" style="margin-top:8px;">
+          新增後會在該地點建立 current（數量=0），並寫入 log。
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
-    const builtInNames = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
+  // 你原本的兩個內建品項
+  const builtInNames = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
 
-    async function init() {
-        const { data: locs } = await _supabase.from('locations').select('*');
-        const sel = document.getElementById('loc-sel');
-        locs.forEach(l => sel.add(new Option(l.name, l.name)));
+  // ====== 小工具 ======
+  function esc(s) {
+    return String(s ?? '')
+      .replaceAll('&','&amp;').replaceAll('<','&lt;')
+      .replaceAll('>','&gt;').replaceAll('"','&quot;')
+      .replaceAll("'","&#39;");
+  }
+  function nowIso() { return new Date().toISOString(); }
+  function fmtTime(t) { return t ? new Date(t).toLocaleString() : '無'; }
 
-        // 使用與領用頁面一致的定位邏輯
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(async (pos) => {
-                const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
-                if (nearest) {
-                    sel.value = nearest.name;
-                    sync();
-                }
-            }, () => { document.getElementById('cur-loc').innerText = "定位失敗，請手動選擇"; });
-        }
+  async function requireUserId() {
+    const { data, error } = await _supabase.auth.getUser();
+    if (error) console.warn(error);
+    const user = data?.user;
+    if (!user?.id) {
+      alert("請先登入（Supabase Auth），才可以寫入資料。");
+      throw new Error("Not logged in");
+    }
+    document.getElementById('cur-user').innerText = user.id;
+    return user.id;
+  }
+
+  // ====== 初始化 ======
+  async function init() {
+    // 使用者顯示
+    try { await requireUserId(); }
+    catch(_) {}
+
+    // locations 下拉
+    const { data: locs, error } = await _supabase.from('locations').select('*');
+    if (error) {
+      console.error(error);
+      alert("讀取 locations 失敗，請檢查 Supabase 連線 / RLS。");
+      return;
     }
 
-    async function sync() {
-        const locName = document.getElementById('loc-sel').value;
-        document.getElementById('cur-loc').innerText = locName;
-        
-        const { data: lData } = await _supabase.from('locations').select('note').eq('name', locName).single();
-        document.getElementById('note-in').value = lData?.note || '';
-        
-        loadStock(locName);
+    const sel = document.getElementById('loc-sel');
+    sel.innerHTML = '';
+    (locs || []).forEach(l => sel.add(new Option(l.name, l.name)));
+
+    // 先預設第一個
+    if (locs?.length) {
+      sel.value = locs[0].name;
+      document.getElementById('cur-loc').innerText = sel.value;
     }
 
-    async function loadStock(loc) {
-        const { data } = await _supabase.from('hospital_stock').select('*').eq('location_name', loc);
-        const list = document.getElementById('fix-list');
-        
-        // 渲染邏輯：內建品項優先顯示 (若資料庫沒資料則顯示 0)
-        let html = builtInNames.map(name => {
-            const db = data?.find(d => d.item_name === name);
-            return renderRow(name, db?.quantity || 0, db?.unit || '個', db?.updated_at);
-        }).join('');
+    // 用你原本那套定位（若有提供 findNearestLocation）
+    if (navigator.geolocation && window.findNearestLocation) {
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        try {
+          const nearest = await window.findNearestLocation(pos.coords.latitude, pos.coords.longitude);
+          if (nearest?.name) sel.value = nearest.name;
+        } catch(e) {}
+        sync();
+      }, () => {
+        document.getElementById('cur-loc').innerText = "定位失敗，請手動選擇";
+        sync();
+      });
+    } else {
+      sync();
+    }
+  }
 
-        // 渲染其他品項
-        const others = data?.filter(d => !builtInNames.includes(d.item_name)) || [];
-        html += others.map(d => renderRow(d.item_name, d.quantity, d.unit, d.updated_at)).join('');
-        list.innerHTML = html;
+  async function sync() {
+    const locName = document.getElementById('loc-sel').value;
+    document.getElementById('cur-loc').innerText = locName;
+
+    await Promise.all([
+      loadStock(locName),
+      loadReminders(locName)
+    ]);
+  }
+
+  // ====== 固定庫存：讀取 ======
+  async function loadStock(loc) {
+    const { data, error } = await _supabase
+      .from('hospital_stock_current')
+      .select('*')
+      .eq('location_name', loc);
+
+    if (error) {
+      console.error(error);
+      alert("讀取 hospital_stock_current 失敗，請檢查 RLS / table 名稱。");
+      return;
     }
 
-    function renderRow(name, qty, unit, time, note) {
-        return `
-            <div style="border-bottom: 1px solid #eee; padding: 15px 0;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <b>${name}</b>
-                    <div>
-                        <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}', null)" style="width:50px;"> ${unit}
-                    </div>
-                </div>
-                <input type="text" value="${note || ''}" 
-                       placeholder="輸入品項備註 (如：放在第三抽屜)" 
-                       onchange="updateQty('${name}', null, '${unit}', this.value)"
-                       style="width:100%; margin-top:8px; padding:5px; font-size:12px; border:1px solid #eee; border-radius:4px; color:#666;">
-                <div style="font-size:10px; color:#bbb; margin-top:5px;">更新時間: ${time ? new Date(time).toLocaleString() : '無'}</div>
-            </div>`;
+    const list = document.getElementById('fix-list');
+
+    // 內建優先顯示（沒有就顯示 0）
+    let html = builtInNames.map(name => {
+      const db = (data || []).find(d => d.item_name === name);
+      return renderStockRow({
+        item_name: name,
+        quantity: db?.quantity ?? 0,
+        note: db?.note ?? '',
+        updated_at: db?.updated_at ?? null,
+        operator_user_id: db?.operator_user_id ?? null
+      });
+    }).join('');
+
+    // 其他品項
+    const others = (data || []).filter(d => !builtInNames.includes(d.item_name));
+    html += others.map(d => renderStockRow(d)).join('');
+
+    list.innerHTML = html;
+  }
+
+  function renderStockRow(d) {
+    const name = esc(d.item_name);
+    const qty = Number(d.quantity ?? 0);
+    const note = esc(d.note ?? '');
+    const time = fmtTime(d.updated_at);
+    const op = d.operator_user_id ? esc(d.operator_user_id) : '-';
+
+    return `
+      <div class="row">
+        <div class="row-top">
+          <b>${name}</b>
+          <div class="qty-controls">
+            <button class="qty-btn" title="-1" onclick="adjustQty('${escAttr(d.item_name)}', -1)">−</button>
+            <input type="number" value="${qty}" onchange="setQty('${escAttr(d.item_name)}', this.value)">
+            <button class="qty-btn" title="+1" onclick="adjustQty('${escAttr(d.item_name)}', 1)">+</button>
+          </div>
+        </div>
+
+        <div style="margin-top:8px;">
+          <input type="text"
+            value="${note}"
+            placeholder="輸入品項備註（如：放在第三抽屜）"
+            onchange="setItemNote('${escAttr(d.item_name)}', this.value)"
+          />
+        </div>
+
+        <div class="muted small" style="margin-top:6px;">
+          更新時間：${time}　｜　操作者：${op}
+        </div>
+      </div>
+    `;
+  }
+
+  // 用在 onclick / attribute 的逃逸（避免引號炸掉）
+  function escAttr(s) {
+    return String(s ?? '').replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  }
+
+  // ====== 固定庫存：寫入（Current + Log） ======
+  async function getCurrentStockRow(loc, itemName) {
+    const { data, error } = await _supabase
+      .from('hospital_stock_current')
+      .select('*')
+      .eq('location_name', loc)
+      .eq('item_name', itemName)
+      .maybeSingle();
+
+    if (error) console.warn(error);
+    return data || null;
+  }
+
+  async function upsertCurrentStock(loc, itemName, quantity, note, operatorUserId) {
+    const payload = {
+      location_name: loc,
+      item_name: itemName,
+      quantity: quantity,
+      note: note ?? null,
+      updated_at: nowIso(),
+      operator_user_id: operatorUserId
+    };
+
+    const { error } = await _supabase
+      .from('hospital_stock_current')
+      .upsert(payload, { onConflict: 'location_name,item_name' });
+
+    if (error) throw error;
+  }
+
+  async function insertStockLog(loc, itemName, action, beforeQty, afterQty, beforeNote, afterNote, operatorUserId) {
+    const payload = {
+      location_name: loc,
+      item_name: itemName,
+      action: action,
+      qty_before: beforeQty ?? null,
+      qty_after: afterQty ?? null,
+      note_before: beforeNote ?? null,
+      note_after: afterNote ?? null,
+      operator_user_id: operatorUserId,
+      created_at: nowIso()
+    };
+
+    const { error } = await _supabase.from('hospital_stock_log').insert(payload);
+    if (error) throw error;
+  }
+
+  // 直接設定數量（set）
+  async function setQty(itemName, newQtyRaw) {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    let newQty = Number(newQtyRaw);
+    if (!Number.isFinite(newQty)) newQty = 0;
+    if (newQty < 0) newQty = 0;
+
+    const cur = await getCurrentStockRow(loc, itemName);
+    const beforeQty = cur?.quantity ?? 0;
+    const beforeNote = cur?.note ?? '';
+
+    // current
+    await upsertCurrentStock(loc, itemName, newQty, beforeNote, operatorUserId);
+
+    // log
+    await insertStockLog(loc, itemName, 'set', beforeQty, newQty, null, null, operatorUserId);
+
+    // 重新載入（確保 updated_at / operator 刷新）
+    await loadStock(loc);
+  }
+
+  // +/- 調整（adjust）
+  async function adjustQty(itemName, delta) {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    const cur = await getCurrentStockRow(loc, itemName);
+    const beforeQty = cur?.quantity ?? 0;
+    const beforeNote = cur?.note ?? '';
+    let afterQty = beforeQty + Number(delta || 0);
+    if (!Number.isFinite(afterQty)) afterQty = beforeQty;
+    if (afterQty < 0) afterQty = 0;
+
+    await upsertCurrentStock(loc, itemName, afterQty, beforeNote, operatorUserId);
+    await insertStockLog(loc, itemName, 'adjust', beforeQty, afterQty, null, null, operatorUserId);
+
+    await loadStock(loc);
+  }
+
+  // 修改品項備註（note）
+  async function setItemNote(itemName, newNoteRaw) {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    const newNote = String(newNoteRaw ?? '').trim();
+
+    const cur = await getCurrentStockRow(loc, itemName);
+    const beforeQty = cur?.quantity ?? 0;
+    const beforeNote = cur?.note ?? '';
+
+    await upsertCurrentStock(loc, itemName, beforeQty, newNote, operatorUserId);
+    await insertStockLog(loc, itemName, 'note', null, null, beforeNote, newNote, operatorUserId);
+
+    await loadStock(loc);
+  }
+
+  // 新增其他耗材（建立 current + log）
+  async function addOther() {
+    const name = document.getElementById('new-name').value?.trim();
+    if (!name) return;
+
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    const cur = await getCurrentStockRow(loc, name);
+    if (cur) {
+      alert("此品項已存在於該地點。");
+      return;
     }
 
-    // 更新函數也要改，能同時處理數量或備註
-    async function updateQty(name, qty, unit, note) {
-        const loc = document.getElementById('loc-sel').value;
-        
-        // 抓取目前的資料，避免更新備註時覆蓋了數量，或更新數量時覆蓋了備註
-        const { data: current } = await _supabase.from('hospital_stock')
-            .select('*').eq('location_name', loc).eq('item_name', name).single();
+    await upsertCurrentStock(loc, name, 0, '', operatorUserId);
+    await insertStockLog(loc, name, 'set', null, 0, null, null, operatorUserId);
 
-        const updateData = {
-            location_name: loc,
-            item_name: name,
-            quantity: qty !== null ? qty : (current?.quantity || 0),
-            unit: unit,
-            note: note !== null ? note : (current?.note || ''),
-            updated_at: new Date()
-        };
+    document.getElementById('new-name').value = '';
+    await loadStock(loc);
+  }
 
-        await _supabase.from('hospital_stock').upsert(updateData, { onConflict: 'location_name, item_name' });
-        // 不用 reload，偷偷更新就好，或者 loadStock(loc)
+  // ====== 提醒事項：讀取 ======
+  async function loadReminders(loc) {
+    const { data, error } = await _supabase
+      .from('location_reminder_current')
+      .select('*')
+      .eq('location_name', loc)
+      .eq('is_visible', true)
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.error(error);
+      alert("讀取 location_reminder_current 失敗，請檢查 RLS / table 名稱。");
+      return;
     }
 
-    async function addOther() {
-        const name = document.getElementById('new-name').value;
-        const unit = document.getElementById('new-unit').value;
-        if (name) await updateQty(name, 0, unit);
+    const container = document.getElementById('reminder-list');
+    if (!data?.length) {
+      container.innerHTML = `<div class="muted">目前沒有提醒事項。</div>`;
+      return;
     }
 
-    async function saveNote() {
-        const loc = document.getElementById('loc-sel').value;
-        await _supabase.from('locations').update({ note: document.getElementById('note-in').value }).eq('name', loc);
-        alert("備註存好了！");
+    container.innerHTML = data.map(r => renderReminderCard(r)).join('');
+  }
+
+  function renderReminderCard(r) {
+    const id = escAttr(r.id);
+    const content = esc(r.content ?? '');
+    const time = fmtTime(r.updated_at);
+    const op = r.operator_user_id ? esc(r.operator_user_id) : '-';
+
+    return `
+      <div class="reminder-card">
+        <div class="muted small">更新：${time}　｜　操作者：${op}</div>
+        <div style="margin-top:8px;">
+          <input type="text" id="reminder-${id}" value="${content}">
+        </div>
+        <div class="reminder-actions">
+          <button class="btn-light" onclick="updateReminder('${id}')">更新</button>
+          <button class="btn-danger" onclick="hideReminder('${id}')">刪除（隱藏）</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // ====== 提醒事項：寫入（Current + Log） ======
+  async function getReminderRowById(id) {
+    const { data, error } = await _supabase
+      .from('location_reminder_current')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) console.warn(error);
+    return data || null;
+  }
+
+  async function insertReminderLog(loc, action, beforeContent, afterContent, operatorUserId) {
+    const payload = {
+      location_name: loc,
+      action: action,
+      content_before: beforeContent ?? null,
+      content_after: afterContent ?? null,
+      operator_user_id: operatorUserId,
+      created_at: nowIso()
+    };
+    const { error } = await _supabase.from('location_reminder_log').insert(payload);
+    if (error) throw error;
+  }
+
+  async function addReminder() {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+    const content = document.getElementById('reminder-new').value?.trim();
+    if (!content) return;
+
+    // current insert（多筆）
+    const payload = {
+      location_name: loc,
+      content: content,
+      is_visible: true,
+      updated_at: nowIso(),
+      operator_user_id: operatorUserId
+    };
+
+    const { error } = await _supabase.from('location_reminder_current').insert(payload);
+    if (error) {
+      console.error(error);
+      alert("新增提醒失敗，請檢查 RLS。");
+      return;
     }
-    init();
+
+    // log
+    await insertReminderLog(loc, 'create', null, content, operatorUserId);
+
+    document.getElementById('reminder-new').value = '';
+    await loadReminders(loc);
+  }
+
+  async function updateReminder(id) {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    const input = document.getElementById(`reminder-${id}`);
+    const newContent = input?.value?.trim() ?? '';
+    if (!newContent) {
+      alert("內容不可為空；若要移除請按「刪除（隱藏）」");
+      return;
+    }
+
+    const cur = await getReminderRowById(id);
+    const before = cur?.content ?? '';
+
+    // current update
+    const { error } = await _supabase
+      .from('location_reminder_current')
+      .update({
+        content: newContent,
+        updated_at: nowIso(),
+        operator_user_id: operatorUserId
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error(error);
+      alert("更新提醒失敗，請檢查 RLS。");
+      return;
+    }
+
+    // log
+    await insertReminderLog(loc, 'update', before, newContent, operatorUserId);
+
+    await loadReminders(loc);
+  }
+
+  async function hideReminder(id) {
+    const loc = document.getElementById('loc-sel').value;
+    const operatorUserId = await requireUserId();
+
+    const cur = await getReminderRowById(id);
+    const before = cur?.content ?? '';
+
+    // current hide（soft delete）
+    const { error } = await _supabase
+      .from('location_reminder_current')
+      .update({
+        is_visible: false,
+        updated_at: nowIso(),
+        operator_user_id: operatorUserId
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error(error);
+      alert("刪除（隱藏）失敗，請檢查 RLS。");
+      return;
+    }
+
+    // log
+    await insertReminderLog(loc, 'hide', before, null, operatorUserId);
+
+    await loadReminders(loc);
+  }
+
+  // ====== 啟動 ======
+  init();
 </script>
 </body>
 </html>
