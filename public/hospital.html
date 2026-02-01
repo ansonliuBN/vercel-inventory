@@ -87,25 +87,42 @@
         list.innerHTML = html;
     }
 
-    function renderRow(name, qty, unit, time) {
+    function renderRow(name, qty, unit, time, note) {
         return `
-            <div class="item-card">
-                <div>
-                    <b>${name}</b><br>
-                    <small style="color:#bbb;">${time ? '最後更新: ' + new Date(time).toLocaleString() : '尚未更新'}</small>
+            <div style="border-bottom: 1px solid #eee; padding: 15px 0;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <b>${name}</b>
+                    <div>
+                        <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}', null)" style="width:50px;"> ${unit}
+                    </div>
                 </div>
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <input type="number" value="${qty}" onchange="updateQty('${name}', this.value, '${unit}')"> <span>${unit}</span>
-                </div>
+                <input type="text" value="${note || ''}" 
+                       placeholder="輸入品項備註 (如：放在第三抽屜)" 
+                       onchange="updateQty('${name}', null, '${unit}', this.value)"
+                       style="width:100%; margin-top:8px; padding:5px; font-size:12px; border:1px solid #eee; border-radius:4px; color:#666;">
+                <div style="font-size:10px; color:#bbb; margin-top:5px;">更新時間: ${time ? new Date(time).toLocaleString() : '無'}</div>
             </div>`;
     }
 
-    async function updateQty(name, qty, unit) {
+    // 更新函數也要改，能同時處理數量或備註
+    async function updateQty(name, qty, unit, note) {
         const loc = document.getElementById('loc-sel').value;
-        await _supabase.from('hospital_stock').upsert({
-            location_name: loc, item_name: name, quantity: qty, unit: unit, updated_at: new Date()
-        }, { onConflict: 'location_name, item_name' });
-        loadStock(loc); // 刷新
+        
+        // 抓取目前的資料，避免更新備註時覆蓋了數量，或更新數量時覆蓋了備註
+        const { data: current } = await _supabase.from('hospital_stock')
+            .select('*').eq('location_name', loc).eq('item_name', name).single();
+
+        const updateData = {
+            location_name: loc,
+            item_name: name,
+            quantity: qty !== null ? qty : (current?.quantity || 0),
+            unit: unit,
+            note: note !== null ? note : (current?.note || ''),
+            updated_at: new Date()
+        };
+
+        await _supabase.from('hospital_stock').upsert(updateData, { onConflict: 'location_name, item_name' });
+        // 不用 reload，偷偷更新就好，或者 loadStock(loc)
     }
 
     async function addOther() {
