@@ -42,9 +42,6 @@
       <div class="loc-tag">
         目前定位：<b id="cur-loc" style="color:#007bff;">偵測中...</b>
         <select id="loc-sel" style="width:100%; margin-top:10px; padding:10px; border-radius:10px; border:1px solid #cfe3ff;" onchange="sync()"></select>
-        <div class="muted" style="margin-top:8px;">
-          使用者：<span id="cur-user">未登入</span>
-        </div>
       </div>
 
       <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
@@ -68,9 +65,21 @@
 
       <div id="fix-list" style="margin-top:10px;"></div>
 
+      <button class="btn-primary" style="width:100%; margin: 10px 0;" onclick="commitStockChanges()">
+        更新（儲存所有變更）
+      </button>
+      <div class="muted small" id="pending-hint" style="margin-top:6px;">
+        目前未儲存：0 筆
+      </div>
+
       <div style="margin-top:18px; padding-top:15px; border-top:2px dashed #eee;">
         <label class="muted">新增其他耗材（自由輸入 item_name）：</label>
         <div style="display:flex; gap:8px; margin-top:8px;">
+          <input type="number"
+            data-item="${escAttr(d.item_name)}"
+            value="${qty}"
+            onchange="setQty('${escAttr(d.item_name)}', this.value)">
+
           <input type="text" id="new-name" placeholder="品名（例如：鑽頭套件）" style="flex:2;">
           <button class="btn-light" onclick="addOther()">新增</button>
         </div>
@@ -84,6 +93,7 @@
 <script>
   // 你原本的兩個內建品項
   const builtInNames = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
+  const pendingStockChanges = new Map(); 
 
   // ====== 小工具 ======
   function esc(s) {
@@ -92,8 +102,12 @@
       .replaceAll('>','&gt;').replaceAll('"','&quot;')
       .replaceAll("'","&#39;");
   }
+  function getOperator() {
+    return localStorage.getItem('user_email') || 'unknown';
+  }
+
   function nowIso() { return new Date().toISOString(); }
-  function fmtTime(t) { return t ? new Date(t).toLocaleString() : '無'; }
+  function fmtTime(t) { return t ? new Date(time).toLocaleString('zh-TW', {hour12: false}) : '無'; }
 
   async function requireUserId() {
     const { data, error } = await _supabase.auth.getUser();
@@ -200,7 +214,7 @@
     const op = d.operator_user_id ? esc(d.operator_user_id) : '-';
 
     return `
-      <div class="row">
+      <div class="row" data-row="${escAttr(d.item_name)}">
         <div class="row-top">
           <b>${name}</b>
           <div class="qty-controls">
@@ -213,13 +227,14 @@
         <div style="margin-top:8px;">
           <input type="text"
             value="${note}"
+            style="width:50%;"
             placeholder="輸入品項備註（如：放在第三抽屜）"
             onchange="setItemNote('${escAttr(d.item_name)}', this.value)"
           />
         </div>
 
         <div class="muted small" style="margin-top:6px;">
-          更新時間：${time}　｜　操作者：${op}
+          更新時間：${time}　｜　更新者：${op}
         </div>
       </div>
     `;
@@ -250,7 +265,7 @@
       quantity: quantity,
       note: note ?? null,
       updated_at: nowIso(),
-      operator_user_id: operatorUserId
+      operator: operator
     };
 
     const { error } = await _supabase
@@ -269,7 +284,7 @@
       qty_after: afterQty ?? null,
       note_before: beforeNote ?? null,
       note_after: afterNote ?? null,
-      operator_user_id: operatorUserId,
+      operator: operator,
       created_at: nowIso()
     };
 
@@ -277,63 +292,139 @@
     if (error) throw error;
   }
 
-  // 直接設定數量（set）
-  async function setQty(itemName, newQtyRaw) {
-    const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
-
+  function setQty(itemName, newQtyRaw) {
     let newQty = Number(newQtyRaw);
     if (!Number.isFinite(newQty)) newQty = 0;
     if (newQty < 0) newQty = 0;
 
-    const cur = await getCurrentStockRow(loc, itemName);
-    const beforeQty = cur?.quantity ?? 0;
-    const beforeNote = cur?.note ?? '';
+    const cur = pendingStockChanges.get(itemName) || {};
+    pendingStockChanges.set(itemName, { ...cur, qty: newQty });
 
-    // current
-    await upsertCurrentStock(loc, itemName, newQty, beforeNote, operatorUserId);
-
-    // log
-    await insertStockLog(loc, itemName, 'set', beforeQty, newQty, null, null, operatorUserId);
-
-    // 重新載入（確保 updated_at / operator 刷新）
-    await loadStock(loc);
+    // 可選：把這列標示成「未儲存」
+    markRowDirty(itemName, true);
   }
 
-  // +/- 調整（adjust）
-  async function adjustQty(itemName, delta) {
-    const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
 
-    const cur = await getCurrentStockRow(loc, itemName);
-    const beforeQty = cur?.quantity ?? 0;
-    const beforeNote = cur?.note ?? '';
-    let afterQty = beforeQty + Number(delta || 0);
-    if (!Number.isFinite(afterQty)) afterQty = beforeQty;
-    if (afterQty < 0) afterQty = 0;
+  function adjustQty(itemName, delta) {
+    const input = document.querySelector(`input[data-item="${cssEscape(itemName)}"]`);
+    const before = Number(input?.value || 0);
+    let after = before + Number(delta || 0);
+    if (after < 0) after = 0;
+    if (input) input.value = after;
 
-    await upsertCurrentStock(loc, itemName, afterQty, beforeNote, operatorUserId);
-    await insertStockLog(loc, itemName, 'adjust', beforeQty, afterQty, null, null, operatorUserId);
+    const cur = pendingStockChanges.get(itemName) || {};
+    pendingStockChanges.set(itemName, { ...cur, qty: after });
 
-    await loadStock(loc);
+    markRowDirty(itemName, true);
   }
 
-  // 修改品項備註（note）
-  async function setItemNote(itemName, newNoteRaw) {
-    const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
 
+  function setItemNote(itemName, newNoteRaw) {
     const newNote = String(newNoteRaw ?? '').trim();
+    const cur = pendingStockChanges.get(itemName) || {};
+    pendingStockChanges.set(itemName, { ...cur, note: newNote });
 
-    const cur = await getCurrentStockRow(loc, itemName);
-    const beforeQty = cur?.quantity ?? 0;
-    const beforeNote = cur?.note ?? '';
-
-    await upsertCurrentStock(loc, itemName, beforeQty, newNote, operatorUserId);
-    await insertStockLog(loc, itemName, 'note', null, null, beforeNote, newNote, operatorUserId);
-
-    await loadStock(loc);
+    markRowDirty(itemName, true);
   }
+
+  async function commitStockChanges() {
+    const loc = document.getElementById('loc-sel').value;
+    const operator = getOperator(); // 你之前改成 localStorage email 那套
+    if (pendingStockChanges.size === 0) {
+      alert('沒有需要更新的變更。');
+      return;
+    }
+
+    // 1) 先抓 current（一次抓整個地點，避免一筆一筆 select）
+    const { data: currentRows, error: curErr } = await _supabase
+      .from('hospital_stock_current')
+      .select('*')
+      .eq('location_name', loc);
+
+    if (curErr) { console.error(curErr); alert('讀取 current 失敗'); return; }
+
+    const curMap = new Map((currentRows || []).map(r => [r.item_name, r]));
+
+    // 2) 組 upsert payload（current）
+    const upserts = [];
+    const logs = [];
+
+    for (const [itemName, chg] of pendingStockChanges.entries()) {
+      const cur = curMap.get(itemName);
+      const beforeQty = cur?.quantity ?? 0;
+      const beforeNote = cur?.note ?? '';
+
+      const afterQty = (chg.qty !== undefined) ? chg.qty : beforeQty;
+      const afterNote = (chg.note !== undefined) ? chg.note : beforeNote;
+
+      upserts.push({
+        location_name: loc,
+        item_name: itemName,
+        quantity: afterQty,
+        note: afterNote,
+        updated_at: new Date().toISOString(),
+        operator: operator
+      });
+
+      // log：只要有變就寫（你要更嚴謹可以比對 before/after）
+      const action =
+        (chg.qty !== undefined && chg.note !== undefined) ? 'set' :
+        (chg.qty !== undefined) ? 'set' :
+        'note';
+
+      logs.push({
+        location_name: loc,
+        item_name: itemName,
+        action,
+        qty_before: (chg.qty !== undefined) ? beforeQty : null,
+        qty_after: (chg.qty !== undefined) ? afterQty : null,
+        note_before: (chg.note !== undefined) ? beforeNote : null,
+        note_after: (chg.note !== undefined) ? afterNote : null,
+        operator: operator,
+        created_at: new Date().toISOString()
+      });
+    }
+
+    // 3) 一次 upsert current
+    const { error: upErr } = await _supabase
+      .from('hospital_stock_current')
+      .upsert(upserts, { onConflict: 'location_name,item_name' });
+
+    if (upErr) { console.error(upErr); alert('更新 current 失敗'); return; }
+
+    // 4) 一次 insert log
+    const { error: logErr } = await _supabase
+      .from('hospital_stock_log')
+      .insert(logs);
+
+    if (logErr) { console.error(logErr); alert('寫入 log 失敗'); return; }
+
+    // 5) 清空暫存 + 重刷
+    pendingStockChanges.clear();
+    updatePendingHint();
+
+    await loadStock(loc); // 重新讀 current 刷新 UI（時間/更新者）
+    alert('更新完成！');
+  }
+
+  function updatePendingHint() {
+    const el = document.getElementById('pending-hint');
+    if (!el) return;
+    el.innerText = `目前未儲存：${pendingStockChanges.size} 筆`;
+  }
+
+  function markRowDirty(itemName, isDirty) {
+    const row = document.querySelector(`[data-row="${cssEscape(itemName)}"]`);
+    if (row) row.style.opacity = isDirty ? '0.85' : '1';
+    updatePendingHint();
+  }
+
+  // 避免 itemName 有特殊字元造成 querySelector 爆
+  function cssEscape(s) {
+    return String(s).replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+  }
+
+
 
   // 新增其他耗材（建立 current + log）
   async function addOther() {
@@ -341,7 +432,7 @@
     if (!name) return;
 
     const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
+    const operator = getOperator();
 
     const cur = await getCurrentStockRow(loc, name);
     if (cur) {
@@ -349,10 +440,13 @@
       return;
     }
 
-    await upsertCurrentStock(loc, name, 0, '', operatorUserId);
-    await insertStockLog(loc, name, 'set', null, 0, null, null, operatorUserId);
+    const qty = Number(document.getElementById('new-qty').value || 0);
+    await upsertCurrentStock(loc, name, qty, '', operator);
+    await insertStockLog(loc, name, 'set', null, qty, null, null, operator);
 
     document.getElementById('new-name').value = '';
+    document.getElementById('new-qty').value = '';
+
     await loadStock(loc);
   }
 
@@ -388,7 +482,7 @@
 
     return `
       <div class="reminder-card">
-        <div class="muted small">更新：${time}　｜　操作者：${op}</div>
+        <div class="muted small">更新：${time}　｜　更新者：${op}</div>
         <div style="margin-top:8px;">
           <input type="text" id="reminder-${id}" value="${content}">
         </div>
@@ -417,7 +511,7 @@
       action: action,
       content_before: beforeContent ?? null,
       content_after: afterContent ?? null,
-      operator_user_id: operatorUserId,
+      operator: operator,
       created_at: nowIso()
     };
     const { error } = await _supabase.from('location_reminder_log').insert(payload);
@@ -426,7 +520,7 @@
 
   async function addReminder() {
     const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
+    const operator = getOperator();
     const content = document.getElementById('reminder-new').value?.trim();
     if (!content) return;
 
@@ -436,7 +530,7 @@
       content: content,
       is_visible: true,
       updated_at: nowIso(),
-      operator_user_id: operatorUserId
+      operator: operator
     };
 
     const { error } = await _supabase.from('location_reminder_current').insert(payload);
@@ -455,7 +549,7 @@
 
   async function updateReminder(id) {
     const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
+    const operator = getOperator();
 
     const input = document.getElementById(`reminder-${id}`);
     const newContent = input?.value?.trim() ?? '';
@@ -473,7 +567,7 @@
       .update({
         content: newContent,
         updated_at: nowIso(),
-        operator_user_id: operatorUserId
+        operator: operator
       })
       .eq('id', id);
 
@@ -491,7 +585,7 @@
 
   async function hideReminder(id) {
     const loc = document.getElementById('loc-sel').value;
-    const operatorUserId = await requireUserId();
+    const operator = getOperator();
 
     const cur = await getReminderRowById(id);
     const before = cur?.content ?? '';
@@ -502,7 +596,7 @@
       .update({
         is_visible: false,
         updated_at: nowIso(),
-        operator_user_id: operatorUserId
+        operator: operator
       })
       .eq('id', id);
 
