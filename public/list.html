@@ -115,7 +115,7 @@
 
 
         /* 群組內容區塊：用 class 控制顯示/隱藏 */
-        .hidden-rows { display:none; }
+        .hidden-rows { display:none; }      
 
     </style>
 </head>
@@ -125,7 +125,6 @@
     <h2 style="margin:0;">📦 庫存實時總表 (整合版)</h2>
     <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 6px; border: 1px solid #ddd;">🔄 刷新</button>
 </div>
-<div id="list"></div>
 <table>
     <thead>
         <tr>
@@ -136,6 +135,7 @@
             <th class="col-note">備註</th>
         </tr>
     </thead>
+    <tbody id="list"></tbody>
 </table>
 
 <div id="modal-overlay" onclick="closeModal()">
@@ -182,14 +182,16 @@
         const gid = `g${idx++}`;
         const count = items.length;
 
-        // 群組列（位置）
+        // ✅ 群組列：在 table 裡用 tr + td colspan=5（合法）
         html += `
-        <tr class="group-row" onclick="toggleGroup('${gid}', event)">
+        <tr class="group-row" data-group="${gid}">
             <td colspan="5">
             <div class="group-title">
-                <div><span class="caret" id="${gid}_caret">▼</span>📍 ${loc}</div>
+                <div style="cursor:pointer;" onclick="toggleGroup('${gid}')">
+                <span class="caret" id="${gid}_caret">▼</span> 📍 ${loc}
+                </div>
                 <div style="display:flex; gap:10px; align-items:center;">
-                <span class="badge">${count} 筆</span>
+                <span class="badge">${items.length} 筆</span>
                 <span style="font-size:12px; color:#666;">點擊展開/收合</span>
                 </div>
             </div>
@@ -197,12 +199,11 @@
         </tr>
         `;
 
-        // 子列（品項）
+        // ✅ 子列：正常 5 欄，不會跑版
         for (const i of items) {
         const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
         const displayName = i.friendly_name || i.product_code || '未知產品';
 
-        // 備註清理：避免多餘空行把高度撐爆
         const note = (i.location_note || '-')
             .replace(/\r/g,'')
             .replace(/\n{2,}/g,'\n')
@@ -226,22 +227,38 @@
             </tr>
         `;
         }
-    }
 
+        // ✅ 預設收合：非業務倉庫先隱藏子列（你想全部展開就刪掉這段）
+        if (loc !== '業務倉庫') {
+        // 先在渲染後用 toggleGroup(false) 也行，但這裡先不做，等 render 完再做一次也可
+        }
+    }
     document.getElementById('list').innerHTML = html;
+
+    // ✅ 預設：除了業務倉庫，其它群組先收合（可選）
+    let gid2 = 0;
+    for (const [loc] of groups.entries()) {
+        const g = `g${gid2++}`;
+        if (loc !== '業務倉庫') hideGroup(g);
+    }
+}
+
+    function hideGroup(gid){
+        const rows = document.querySelectorAll(`.${gid}`);
+        rows.forEach(r => r.classList.add('hidden'));
+        const caret = document.getElementById(`${gid}_caret`);
+        if (caret) caret.textContent = '▶';
     }
 
 
-    function toggleGroup(gid, evt){
-    // 防止點到 [+] 的時候也觸發群組
-    if (evt && evt.target && String(evt.target.className).includes('plus-btn')) return;
+    function toggleGroup(gid){
+        const rows = document.querySelectorAll(`.${gid}`);
+        if (!rows.length) return;
+        const isHidden = rows[0].classList.contains('hidden');
 
-    const rows = document.querySelectorAll(`.${gid}`);
-    const caret = document.getElementById(`${gid}_caret`);
-    const isHidden = rows.length > 0 && rows[0].classList.contains('hidden');
-
-    rows.forEach(r => r.classList.toggle('hidden', !isHidden));
-    caret.textContent = isHidden ? '▼' : '▶';
+        rows.forEach(r => r.classList.toggle('hidden', !isHidden));
+        const caret = document.getElementById(`${gid}_caret`);
+        if (caret) caret.textContent = isHidden ? '▼' : '▶';
     }
 
     // 你原本的 openModal/closeModal 可保留
