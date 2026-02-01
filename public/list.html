@@ -34,36 +34,83 @@
         .stock-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
 
         /* 群組列 */
-        .group-row td{
-        background:#f3f6ff;
-        border-bottom: 1px solid #e6ebff;
+        .group {
+        border: 1px solid #eee;
+        border-radius: 12px;
+        padding: 0;
+        margin: 12px 0;
+        overflow: hidden;
+        background: white;
+        }
+
+        .group summary{
+        list-style: none;
+        cursor: pointer;
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #eee;
         font-weight: 700;
-        color:#2b4ea2;
-        padding: 12px;
-        border-radius: 10px;
         }
 
-        .group-row .group-title{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:12px;
+        .group summary::-webkit-details-marker { display:none; }
+
+        .group .meta{
+        display:flex; gap:10px; align-items:center;
+        font-weight: 600;
+        color:#666;
+        font-size: 12px;
         }
 
-        .group-row .badge{
-        background:#e8efff;
-        color:#2b4ea2;
+        .group .badge{
+        background:#eef2ff;
+        color:#374151;
         padding:2px 10px;
         border-radius:999px;
         font-size:12px;
         font-weight:700;
         }
 
-        .group-row .toggle{
-        color:#2b4ea2;
-        font-size:12px;
-        opacity:.9;
+        .group .inner{
+        padding: 0;
         }
+
+        .group table{
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        }
+
+        .group th, .group td{
+        padding: 12px;
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+        }
+
+        .group thead th{
+        background:#fff;
+        color:#666;
+        font-size: 13px;
+        border-bottom: 2px solid #eee;
+        }
+
+        /* 你的欄寬規則照用 */
+        .col-loc { width: 15%; }
+        .col-name { width: 30%; }
+        .col-exp { width: 15%; }
+        .col-qty { width: 10%; text-align: center; }
+        .col-note {
+        width: 30%;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+        color: #666;
+        line-height: 1.5;
+        }
+
 
         /* 群組內容區塊：用 class 控制顯示/隱藏 */
         .hidden-rows { display:none; }
@@ -76,7 +123,7 @@
     <h2 style="margin:0;">📦 庫存實時總表 (整合版)</h2>
     <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 6px; border: 1px solid #ddd;">🔄 刷新</button>
 </div>
-
+<div id="list"></div>
 <table>
     <thead>
         <tr>
@@ -87,7 +134,6 @@
             <th class="col-note">備註</th>
         </tr>
     </thead>
-    <tbody id="list"></tbody>
 </table>
 
 <div id="modal-overlay" onclick="closeModal()">
@@ -100,101 +146,99 @@
 
 <script>
     async function load() {
-        // 1) 主清單
-        const { data: summary, error } = await _supabase
-        .from('inventory_summary')
-        .select('*');
+    const { data: summary, error } = await _supabase.from('inventory_summary').select('*');
+    if (error) return;
 
-        if (error) return;
+    // 一次抓出哪些地點有固定庫存（決定要不要顯示 [+]）
+    const { data: hsLocs } = await _supabase.from('hospital_stock').select('location_name');
+    const hasFixedStockSet = new Set((hsLocs || []).map(x => x.location_name).filter(Boolean));
 
-        // 2) 一次抓出「哪些 location 有固定庫存」
-        const { data: hsLocs, error: hsErr } = await _supabase
-        .from('hospital_stock')
-        .select('location_name');
+    // 業務倉庫置頂 + 其餘照 location 排
+    summary.sort((a, b) => {
+        const aBiz = a.location === '業務倉庫';
+        const bBiz = b.location === '業務倉庫';
+        if (aBiz && !bBiz) return -1;
+        if (!aBiz && bBiz) return 1;
+        return String(a.location || '').localeCompare(String(b.location || ''), 'zh-Hant');
+    });
 
-        const hasFixedStockSet = new Set(
-        (hsLocs || []).map(x => x.location_name).filter(Boolean)
-        );
-
-        // 3) 排序：業務倉庫置頂，其它依 location，再依 expiry
-        summary.sort((a, b) => {
-        const aIsBiz = a.location === '業務倉庫';
-        const bIsBiz = b.location === '業務倉庫';
-        if (aIsBiz && !bIsBiz) return -1;
-        if (!aIsBiz && bIsBiz) return 1;
-
-        const locCmp = String(a.location || '').localeCompare(String(b.location || ''), 'zh-Hant');
-        if (locCmp !== 0) return locCmp;
-
-        const aExp = a.expiry_date ? new Date(a.expiry_date).getTime() : Infinity;
-        const bExp = b.expiry_date ? new Date(b.expiry_date).getTime() : Infinity;
-        return aExp - bExp;
-        });
-
-        // 4) 分組
-        const groups = new Map();
-        for (const item of summary) {
+    // 分組
+    const groups = new Map();
+    for (const item of summary) {
         const loc = item.location || '未分類';
         if (!groups.has(loc)) groups.set(loc, []);
         groups.get(loc).push(item);
-        }
+    }
 
-        const limitDate = new Date();
-        limitDate.setMonth(limitDate.getMonth() + 3);
+    const limitDate = new Date();
+    limitDate.setMonth(limitDate.getMonth() + 3);
 
-        // 5) 渲染：群組列 + 群組內容列
-        let html = '';
-        let gIndex = 0;
+    // 渲染成「卡片群組」
+    let html = '';
+    for (const [loc, items] of groups.entries()) {
+        // 預設：業務倉庫展開，其它收合（你也可以全部展開：把 open 拿掉）
+        const openAttr = (loc === '業務倉庫') ? 'open' : '';
 
-        for (const [loc, items] of groups.entries()) {
-        const groupId = `g_${gIndex++}`;
+        const rowsHtml = items.map(i => {
+        const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+        const displayName = i.friendly_name || i.product_code || '未知產品';
 
-        html += `
-            <tr class="group-row" onclick="toggleGroup('${groupId}')">
-            <td colspan="5">
-                <div class="group-title">
-                <div>📍 ${loc}</div>
-                <div style="display:flex;align-items:center;gap:10px;">
-                    <span class="badge">${items.length} 項</span>
-                    <span class="toggle" id="${groupId}_icon">點擊收合 ▲</span>
-                </div>
-                </div>
-            </td>
-            </tr>
-        `;
-
-        for (const i of items) {
-            const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
-            const displayName = i.friendly_name || i.product_code || '未知產品';
-
-            // ✅ 只有「有固定庫存」才顯示 [+]
-            const showPlus =
+        const showPlus =
             hasFixedStockSet.has(loc) &&
             loc !== '業務倉庫' &&
             loc !== 'CONSUMED';
 
-            html += `
-            <tr class="${groupId}">
-                <td><b>${loc}</b></td>
-                <td>
+        return `
+            <tr>
+            <td class="col-loc"><b>${loc}</b></td>
+            <td class="col-name">
                 <div style="font-weight:bold;">${displayName}</div>
                 <div style="font-size:11px; color:#999;">${i.product_code || ''}</div>
-                </td>
-                <td class="${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
-                <td style="text-align:center;"><b>${i.total_stock ?? '-'}</b></td>
-                <td class="col-note">
+            </td>
+            <td class="col-exp ${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
+            <td class="col-qty"><b>${i.total_stock ?? '-'}</b></td>
+            <td class="col-note">
                 ${i.location_note || '-'}
                 ${showPlus ? `<span class="plus-btn" onclick="openModal('${loc}'); event.stopPropagation();" title="查看固定庫存">[+]</span>` : ``}
-                </td>
+            </td>
             </tr>
-            `;
-        }
+        `;
+        }).join('');
 
-        // 預設：展開（如果你想預設收合，就在這裡先加 hidden-rows）
-        }
+        html += `
+        <details class="group" ${openAttr}>
+            <summary>
+            <div>📍 ${loc}</div>
+            <div class="meta">
+                <span class="badge">${items.length} 筆</span>
+                <span>點擊展開/收合</span>
+            </div>
+            </summary>
 
-        document.getElementById('list').innerHTML = html;
+            <div class="inner">
+            <table>
+                <thead>
+                <tr>
+                    <th class="col-loc">位置</th>
+                    <th class="col-name">產品名稱</th>
+                    <th class="col-exp">效期</th>
+                    <th class="col-qty">數量</th>
+                    <th class="col-note">備註</th>
+                </tr>
+                </thead>
+                <tbody>
+                ${rowsHtml}
+                </tbody>
+            </table>
+            </div>
+        </details>
+        `;
     }
+
+    // 用 div 容器取代原本 table 的 tbody
+    document.getElementById('list').innerHTML = html;
+    }
+
 
     function toggleGroup(groupId){
         const rows = document.querySelectorAll(`.${groupId}`);
