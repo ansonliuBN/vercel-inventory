@@ -81,13 +81,12 @@
       <div style="margin-top:18px; padding-top:15px; border-top:2px dashed #eee;">
         <label class="muted">新增其他耗材（自由輸入 item_name）：</label>
         <div style="display:flex; gap:8px; margin-top:8px;">
-          <input type="number"
-            data-item="${escAttr(d.item_name)}"
-            value="${qty}"
-            onchange="setQty('${escAttr(d.item_name)}', this.value)">
-
           <input type="text" id="new-name" placeholder="品名（例如：鑽頭套件）" style="flex:2;">
-                    <div class="muted small" id="pending-hint" style="margin-top:6px;">
+          <input type="number" id="new-qty" value="0" min="0"
+            placeholder="數量"
+            style="width:110px;"
+            title="提示數量（新增時直接帶入）">
+          <div class="muted small" id="pending-hint" style="margin-top:6px;">
             目前未儲存：0 筆
           </div>
           <button class="btn-light" onclick="addOther()">新增</button>
@@ -103,6 +102,10 @@
   // 你原本的兩個內建品項
   const builtInNames = ['感光球 (Sensory Balls)', 'Skin Fiducial'];
   const pendingStockChanges = new Map(); 
+  function getOperator() {
+    return localStorage.getItem('user_email') || 'unknown';
+  }
+
 
   // ====== 小工具 ======
   function esc(s) {
@@ -111,9 +114,7 @@
       .replaceAll('>','&gt;').replaceAll('"','&quot;')
       .replaceAll("'","&#39;");
   }
-  function getOperator() {
-    return localStorage.getItem('user_email') || 'unknown';
-  }
+
 
   function nowIso() { return new Date().toISOString(); }
   function fmtTime(t) { return t ? new Date(time).toLocaleString('zh-TW', {hour12: false}) : '無'; }
@@ -310,19 +311,24 @@
     markRowDirty(itemName, true);
   }
 
-
   function adjustQty(itemName, delta) {
     const input = document.querySelector(`input[data-item="${cssEscape(itemName)}"]`);
-    const before = Number(input?.value || 0);
+    if (!input) {
+      console.error('找不到 input[data-item]，itemName=', itemName);
+      return;
+    }
+
+    const before = Number(input.value || 0);
     let after = before + Number(delta || 0);
     if (after < 0) after = 0;
-    if (input) input.value = after;
+    input.value = after;
 
     const cur = pendingStockChanges.get(itemName) || {};
     pendingStockChanges.set(itemName, { ...cur, qty: after });
+
+    // 如果你有 dirty 標示就加
+    if (typeof markRowDirty === 'function') markRowDirty(itemName, true);
   }
-
-
 
   function setItemNote(itemName, newNoteRaw) {
     const newNote = String(newNoteRaw ?? '').trim();
@@ -433,11 +439,11 @@
 
   // 新增其他耗材（建立 current + log）
   async function addOther() {
+    const operator = getOperator(); // 你用 localStorage user_email 的那個
     const name = document.getElementById('new-name').value?.trim();
     if (!name) return;
 
     const loc = document.getElementById('loc-sel').value;
-    const operator = getOperator(); // 你用 localStorage user_email 的那個
 
     // 可選：讓新增就能輸入數量（如果你有 new-qty）
     const qtyInput = document.getElementById('new-qty');
