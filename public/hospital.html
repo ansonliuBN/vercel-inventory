@@ -200,7 +200,7 @@
         quantity: db?.quantity ?? 0,
         note: db?.note ?? '',
         updated_at: db?.updated_at ?? null,
-        operator_user_id: db?.operator_user_id ?? null
+        operator: db?.operator ?? null
       });
     }).join('');
 
@@ -216,7 +216,7 @@
     const qty = Number(d.quantity ?? 0);
     const note = esc(d.note ?? '');
     const time = fmtTime(d.updated_at);
-    const op = d.operator_user_id ? esc(d.operator_user_id) : '-';
+    const op = d.operator ? esc(d.operator) : '-';
     const safeName = encodeURIComponent(d.item_name);
 
     return `
@@ -500,7 +500,7 @@
     const id = escAttr(r.id);
     const content = esc(r.content ?? '');
     const time = fmtTime(r.updated_at);
-    const op = r.operator_user_id ? esc(r.operator_user_id) : '-';
+    const op = r.operator ? esc(r.operator) : '-';
 
     return `
       <div class="reminder-card">
