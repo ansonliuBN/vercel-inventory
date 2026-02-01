@@ -188,11 +188,7 @@
       .select('*')
       .eq('location_name', loc);
 
-    if (error) {
-      console.error(error);
-      alert("讀取 hospital_stock_current 失敗，請檢查 RLS / table 名稱。");
-      return;
-    }
+    const safeData = error ? [] : (data || []);
 
     const list = document.getElementById('fix-list');
 
@@ -222,7 +218,6 @@
     const time = fmtTime(d.updated_at);
     const op = d.operator_user_id ? esc(d.operator_user_id) : '-';
     const safeName = encodeURIComponent(d.item_name);
-
 
     return `
       <div class="row" data-row="${escAttr(d.item_name)}">
@@ -325,9 +320,8 @@
 
     const cur = pendingStockChanges.get(itemName) || {};
     pendingStockChanges.set(itemName, { ...cur, qty: after });
-
-    markRowDirty(itemName, true);
   }
+
 
 
   function setItemNote(itemName, newNoteRaw) {
@@ -642,6 +636,7 @@
 
   // ====== 啟動 ======
   init();
+  sync();
 </script>
 </body>
 </html>
