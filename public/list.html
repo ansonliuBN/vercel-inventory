@@ -1,314 +1,376 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js"></script>
-    <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; background: white; margin: 0; }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #eee; color: #666; font-size: 14px; }
-        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: top; }
+  <meta charset="utf-8" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase-config.js"></script>
 
-        /* 比例鎖定 */
-        .col-loc { width: 15%; }
-        .col-name { width: 30%; }
-        .col-exp { width: 15%; }
-        .col-qty { width: 10%; text-align: center; }
-        .col-note {
-            width: 30%;
-            white-space: normal;    /* ✅ 不保留 \n */
-            overflow-wrap: anywhere;  /* ✅ 最重要：強制任何地方都能換行 */
-            word-break: break-word;
-            color: #666;
-            line-height: 1.5;
-            }
+  <style>
+    :root{
+      --bg: #ffffff;
+      --head: #f8f9fa;
+      --line: #eeeeee;
+      --muted: #777;
+      --text: #111;
+      --blue: #2f6fed;
+      --danger:#d9534f;
+      --shadow: 0 10px 25px rgba(0,0,0,.15);
+      --radius: 14px;
+    }
 
-        .urgent { color: #d9534f; font-weight: bold; }
-        .plus-btn { display:inline; color: #007bff; font-weight: bold; cursor: pointer; margin-left: 5px; font-size: 16px; }
+    body{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans TC", Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
 
-        /* 彈出視窗樣式 */
-        #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
-        .modal { background: white; padding: 25px; border-radius: 15px; width: 90%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); position: relative; }
-        .modal h3 { margin-top: 0; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-        .close-btn { position: absolute; top: 15px; right: 15px; font-size: 20px; cursor: pointer; color: #999; }
-        .stock-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+    .topbar{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom: 14px;
+    }
 
-        /* 群組列（位置） */
-        .group-row td{
-        background:#f8f9fa;
-        font-weight:700;
-        border-bottom: 1px solid #eee;
-        }
+    h2{ margin:0; font-size: 20px; }
 
-        .group-title{
-        display:flex;
-        align-items:center;
-        justify-content:space-between;
-        gap:12px;
-        }
+    .btn{
+      padding: 8px 14px;
+      cursor: pointer;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      background: #fff;
+      transition: transform .06s ease, background .2s ease;
+    }
+    .btn:active{ transform: scale(.98); }
+    .btn:hover{ background:#fafafa; }
 
-        .caret{
-        display:inline-block;
-        width:18px;
-        text-align:center;
-        margin-right:6px;
-        color:#666;
-        }
+    .table-wrap{
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background:#fff;
+    }
 
-        .badge{
-        background:#eef2ff;
-        border-radius:999px;
-        padding:2px 10px;
-        font-size:12px;
-        color:#374151;
-        }
+    table{
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
 
-        /* 子列縮排，做出樹狀感 */
-        .child-row td:first-child{
-        padding-left: 36px;        /* ✅ 縮排 */
-        position: relative;
-        }
-        .child-row td:first-child::before{
-        content:"";
-        position:absolute;
-        left:18px;
-        top:0;
-        bottom:0;
-        width:1px;
-        background:#eee;           /* ✅ 直線 */
-        }
-        .child-row td:first-child::after{
-        content:"";
-        position:absolute;
-        left:18px;
-        top:22px;
-        width:12px;
-        height:1px;
-        background:#eee;           /* ✅ 橫線 */
-        }
+    thead th{
+      background: var(--head);
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      color: #666;
+      font-size: 13px;
+      font-weight: 700;
+    }
 
-        .hidden{ display:none; }
+    tbody td{
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      vertical-align: top;
+    }
 
-        /* 備註不要把高度撐爆 */
-        .col-note{
-        white-space: normal;
-        overflow-wrap:anywhere;
-        word-break:break-word;
-        line-height:1.4;
-        }
-        .plus-btn{ display:inline; }
-    
+    tbody tr:hover{
+      background:#fbfbfc;
+    }
 
-        /* 你的欄寬規則照用 */
-        .col-loc { width: 15%; }
-        .col-name { width: 30%; }
-        .col-exp { width: 15%; }
-        .col-qty { width: 10%; text-align: center; }
-        .col-note {
-        width: 30%;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        word-break: break-word;
-        color: #666;
-        line-height: 1.5;
-        }
+    /* 欄寬 */
+    .col-loc { width: 15%; }
+    .col-name { width: 30%; }
+    .col-exp { width: 15%; }
+    .col-qty { width: 10%; text-align: center; }
+    .col-note {
+      width: 30%;
+      white-space: normal;          /* ✅ 不保留 \n，避免高度爆炸 */
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      color: #666;
+      line-height: 1.4;
+    }
 
+    .loc{
+      font-weight: 700;
+    }
 
-        /* 群組內容區塊：用 class 控制顯示/隱藏 */
-        .hidden-rows { display:none; }      
+    .name{
+      font-weight: 800;
+      letter-spacing: .2px;
+    }
+    .code{
+      font-size: 11px;
+      color: #999;
+      margin-top: 2px;
+    }
 
-    </style>
+    .urgent{
+      color: var(--danger);
+      font-weight: 800;
+    }
+
+    .qty{
+      font-weight: 800;
+      display:inline-block;
+      min-width: 24px;
+      text-align:center;
+    }
+
+    .plus-btn{
+      display:inline-block;
+      margin-left: 8px;
+      color: var(--blue);
+      font-weight: 900;
+      cursor: pointer;
+      user-select: none;
+      font-size: 14px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(47,111,237,.25);
+      background: rgba(47,111,237,.06);
+    }
+    .plus-btn:hover{
+      background: rgba(47,111,237,.12);
+    }
+
+    /* Modal */
+    #modal-overlay{
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      padding: 18px;
+    }
+
+    .modal{
+      background: #fff;
+      width: 92%;
+      max-width: 520px;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .modal-head{
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      display:flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      background: #fff;
+    }
+
+    .modal-title{
+      margin:0;
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .close-btn{
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      border: 1px solid #eee;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      cursor:pointer;
+      color:#666;
+      background:#fff;
+    }
+    .close-btn:hover{ background:#fafafa; }
+
+    .modal-body{
+      padding: 12px 18px 18px 18px;
+      max-height: 60vh;
+      overflow:auto;
+    }
+
+    .stock-item{
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .stock-row{
+      display:flex;
+      justify-content:space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .stock-name{
+      font-weight: 800;
+      flex: 1;
+      overflow-wrap:anywhere;
+    }
+    .stock-qty{
+      white-space: nowrap;
+      font-weight: 800;
+      color:#111;
+    }
+    .stock-note{
+      margin-top: 6px;
+      font-size: 12px;
+      color:#888;
+      white-space: pre-wrap;
+      overflow-wrap:anywhere;
+    }
+
+    .empty{
+      color:#999;
+      text-align:center;
+      padding: 20px 0;
+    }
+  </style>
 </head>
+
 <body>
+  <div class="topbar">
+    <h2>📦 庫存實時總表 (整合版)</h2>
+    <button class="btn" onclick="load()">🔄 刷新</button>
+  </div>
 
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
-    <h2 style="margin:0;">📦 庫存實時總表 (整合版)</h2>
-    <button onclick="load()" style="padding: 8px 15px; cursor: pointer; border-radius: 6px; border: 1px solid #ddd;">🔄 刷新</button>
-</div>
-<table>
-    <thead>
+  <div class="table-wrap">
+    <table>
+      <thead>
         <tr>
-            <th class="col-loc">位置</th>
-            <th class="col-name">產品名稱</th>
-            <th class="col-exp">效期</th>
-            <th class="col-qty">數量</th>
-            <th class="col-note">備註</th>
+          <th class="col-loc">位置</th>
+          <th class="col-name">產品名稱</th>
+          <th class="col-exp">效期</th>
+          <th class="col-qty">數量</th>
+          <th class="col-note">備註</th>
         </tr>
-    </thead>
-    <tbody id="list"></tbody>
-</table>
+      </thead>
+      <tbody id="list"></tbody>
+    </table>
+  </div>
 
-<div id="modal-overlay" onclick="closeModal()">
+  <div id="modal-overlay" onclick="closeModal()">
     <div class="modal" onclick="event.stopPropagation()">
-        <span class="close-btn" onclick="closeModal()">×</span>
-        <h3 id="modal-title">醫院固定庫存</h3>
-        <div id="modal-body">載入中...</div>
+      <div class="modal-head">
+        <h3 class="modal-title" id="modal-title">醫院固定庫存</h3>
+        <div class="close-btn" onclick="closeModal()">✕</div>
+      </div>
+      <div class="modal-body" id="modal-body">載入中...</div>
     </div>
-</div>
+  </div>
 
-<script>
+  <script>
     async function load() {
-    const { data: summary, error } = await _supabase.from('inventory_summary').select('*');
-    if (error) return;
+      const { data: summary, error } = await _supabase
+        .from('inventory_summary')
+        .select('*');
 
-    // 固定庫存地點集合（決定是否顯示 [+]）
-    const { data: hsLocs } = await _supabase.from('hospital_stock').select('location_name');
-    const hasFixedStockSet = new Set((hsLocs || []).map(x => x.location_name).filter(Boolean));
+      if (error) return;
 
-    // 排序：業務倉庫置頂，其它依 location
-    summary.sort((a, b) => {
+      // 哪些 location 有固定庫存（決定是否顯示 [+]）
+      const { data: hsLocs } = await _supabase
+        .from('hospital_stock')
+        .select('location_name');
+
+      const hasFixedStockSet = new Set((hsLocs || []).map(x => x.location_name).filter(Boolean));
+
+      // 排序：業務倉庫置頂，其它照 location，再照產品名
+      summary.sort((a,b) => {
         const aBiz = a.location === '業務倉庫';
         const bBiz = b.location === '業務倉庫';
         if (aBiz && !bBiz) return -1;
         if (!aBiz && bBiz) return 1;
-        return String(a.location||'').localeCompare(String(b.location||''), 'zh-Hant');
-    });
 
-    // 分組
-    const groups = new Map();
-    for (const item of summary) {
-        const loc = item.location || '未分類';
-        if (!groups.has(loc)) groups.set(loc, []);
-        groups.get(loc).push(item);
-    }
+        const locCmp = String(a.location||'').localeCompare(String(b.location||''), 'zh-Hant');
+        if (locCmp !== 0) return locCmp;
 
-    const limitDate = new Date();
-    limitDate.setMonth(limitDate.getMonth() + 3);
+        const nameA = (a.friendly_name || a.product_code || '');
+        const nameB = (b.friendly_name || b.product_code || '');
+        return String(nameA).localeCompare(String(nameB), 'zh-Hant');
+      });
 
-    let html = '';
-    let idx = 0;
+      const limitDate = new Date();
+      limitDate.setMonth(limitDate.getMonth() + 3);
 
-    for (const [loc, items] of groups.entries()) {
-        const gid = `g${idx++}`;
-        const count = items.length;
-
-        // ✅ 群組列：在 table 裡用 tr + td colspan=5（合法）
-        html += `
-        <tr class="group-row" data-group="${gid}">
-            <td colspan="5">
-            <div class="group-title">
-                <div style="cursor:pointer;" onclick="toggleGroup('${gid}')">
-                <span class="caret" id="${gid}_caret">▼</span> 📍 ${loc}
-                </div>
-                <div style="display:flex; gap:10px; align-items:center;">
-                <span class="badge">${items.length} 筆</span>
-                <span style="font-size:12px; color:#666;">點擊展開/收合</span>
-                </div>
-            </div>
-            </td>
-        </tr>
-        `;
-
-        // ✅ 子列：正常 5 欄，不會跑版
-        for (const i of items) {
-        const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+      const html = (summary || []).map(i => {
+        const loc = i.location || '-';
         const displayName = i.friendly_name || i.product_code || '未知產品';
+        const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
 
+        // 備註：不要撐高（把多餘空行壓掉）
         const note = (i.location_note || '-')
-            .replace(/\r/g,'')
-            .replace(/\n{2,}/g,'\n')
-            .trim();
+          .replace(/\r/g,'')
+          .replace(/\n{2,}/g,'\n')
+          .trim();
 
+        // ✅ 有固定庫存才顯示 [+]（只排除 CONSUMED）
         const showPlus = hasFixedStockSet.has(loc) && loc !== 'CONSUMED';
 
-        html += `
-            <tr class="child-row ${gid}">
-            <td class="col-loc"><b>${loc}</b></td>
+        return `
+          <tr>
+            <td class="col-loc"><span class="loc">${loc}</span></td>
             <td class="col-name">
-                <div style="font-weight:bold;">${displayName}</div>
-                <div style="font-size:11px; color:#999;">${i.product_code || ''}</div>
+              <div class="name">${displayName}</div>
+              <div class="code">${i.product_code || ''}</div>
             </td>
             <td class="col-exp ${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
-            <td class="col-qty"><b>${i.total_stock ?? 0}</b></td>
+            <td class="col-qty"><span class="qty">${i.total_stock ?? 0}</span></td>
             <td class="col-note">
-                ${note || '-'}
-                ${showPlus ? `<span class="plus-btn" onclick="openModal('${loc}'); event.stopPropagation();" title="查看固定庫存">[+]</span>` : ``}
+              ${note || '-'}
+              ${showPlus ? `<span class="plus-btn" onclick="openModal('${loc}'); event.stopPropagation();" title="查看固定庫存">+ 固定庫存</span>` : ``}
             </td>
-            </tr>
+          </tr>
         `;
-        }
+      }).join('');
 
-        // ✅ 預設收合：非業務倉庫先隱藏子列（你想全部展開就刪掉這段）
-        if (loc !== '業務倉庫') {
-        // 先在渲染後用 toggleGroup(false) 也行，但這裡先不做，等 render 完再做一次也可
-        }
+      document.getElementById('list').innerHTML = html || `<tr><td colspan="5" class="empty">無資料</td></tr>`;
     }
-    document.getElementById('list').innerHTML = html;
-
-    // ✅ 預設：除了業務倉庫，其它群組先收合（可選）
-    let gid2 = 0;
-    for (const [loc] of groups.entries()) {
-        const g = `g${gid2++}`;
-        if (loc !== '業務倉庫') hideGroup(g);
-    }
-}
-
-    function hideGroup(gid){
-        const rows = document.querySelectorAll(`.${gid}`);
-        rows.forEach(r => r.classList.add('hidden'));
-        const caret = document.getElementById(`${gid}_caret`);
-        if (caret) caret.textContent = '▶';
-    }
-
-
-    function toggleGroup(gid){
-        const rows = document.querySelectorAll(`.${gid}`);
-        if (!rows.length) return;
-        const isHidden = rows[0].classList.contains('hidden');
-
-        rows.forEach(r => r.classList.toggle('hidden', !isHidden));
-        const caret = document.getElementById(`${gid}_caret`);
-        if (caret) caret.textContent = isHidden ? '▼' : '▶';
-    }
-
-    // 你原本的 openModal/closeModal 可保留
-    // openModal 記得 event.stopPropagation() 我已經加在 [+] 上了，避免點 [+] 也把群組收合
 
     async function openModal(locName) {
-    if (!locName || locName === 'CONSUMED') return;
+      if (!locName || locName === 'CONSUMED') return;
 
-    const overlay = document.getElementById('modal-overlay');
-    const title = document.getElementById('modal-title');
-    const body = document.getElementById('modal-body');
+      const overlay = document.getElementById('modal-overlay');
+      const title = document.getElementById('modal-title');
+      const body = document.getElementById('modal-body');
 
-    overlay.style.display = 'flex';
-    title.innerText = `🏥 ${locName} 固定庫存`;
-    body.innerHTML = '讀取中...';
+      overlay.style.display = 'flex';
+      title.innerText = `🏥 ${locName} 固定庫存`;
+      body.innerHTML = '讀取中...';
 
-    const { data, error } = await _supabase
+      const { data, error } = await _supabase
         .from('hospital_stock')
         .select('item_name, quantity, unit, note, updated_at')
         .eq('location_name', locName)
         .order('item_name', { ascending: true });
 
-    if (error) {
-        body.innerHTML = `<p style="color:#d9534f;">讀取失敗：${error.message}</p>`;
+      if (error) {
+        body.innerHTML = `<div class="empty" style="color: var(--danger);">讀取失敗：${error.message}</div>`;
         return;
-    }
+      }
 
-    if (data && data.length > 0) {
+      if (data && data.length > 0) {
         body.innerHTML = data.map(d => `
-        <div style="padding:10px 0; border-bottom:1px solid #f0f0f0;">
-            <div style="display:flex; justify-content:space-between; gap:12px;">
-            <b style="flex:1; overflow-wrap:anywhere;">${d.item_name}</b>
-            <span style="white-space:nowrap;">${d.quantity ?? 0} ${d.unit || ''}</span>
+          <div class="stock-item">
+            <div class="stock-row">
+              <div class="stock-name">${d.item_name}</div>
+              <div class="stock-qty">${d.quantity ?? 0} ${d.unit || ''}</div>
             </div>
-            <div style="font-size:12px; color:#888; margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere;">
-            ${d.note ? d.note : '<無備註>'}
-            </div>
-        </div>
+            <div class="stock-note">${d.note ? d.note : '<無備註>'}</div>
+          </div>
         `).join('');
-    } else {
-        body.innerHTML = '<p style="color:#999; text-align:center;">無固定庫存紀錄</p>';
+      } else {
+        body.innerHTML = `<div class="empty">無固定庫存紀錄</div>`;
+      }
     }
-    }
-
 
     function closeModal() {
-        document.getElementById('modal-overlay').style.display = 'none';
+      document.getElementById('modal-overlay').style.display = 'none';
     }
 
     load();
-</script>
+  </script>
 </body>
 </html>

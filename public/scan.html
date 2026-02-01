@@ -421,7 +421,7 @@
     if (res.ok) {
       alert("✅ 匯入成功！已存入 " + qty + " 件物料。");
       if (window.parent !== window) {
-        window.top.location.href = 'list.html';
+        window.top.location.href = '/';
       }
     } else {
       const err = await res.json().catch(() => ({message: "連線異常"}));
