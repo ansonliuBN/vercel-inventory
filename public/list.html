@@ -98,6 +98,16 @@
       font-weight: 700;
     }
 
+    /* 換地點時的分隔線（第二條線） */
+    .loc-separator td {
+      border-top: 2px solid #ddd !important;
+    }
+
+    /* 備註淡一點（當是分類標籤的感覺） */
+    .note-group {
+      color: #555;
+    }
+
     .name{
       font-weight: 800;
       letter-spacing: .2px;
@@ -304,40 +314,58 @@
     limitDate.setMonth(limitDate.getMonth() + 3);
 
     let lastLoc = null;
+    let lastNoteGroup = null;
 
     const html = summary.map(i => {
-        const loc = i.location || '-';
-        const showLoc = loc !== lastLoc;
-        lastLoc = loc;
+      const loc = i.location || '-';
+      const noteGroup = (i.location_note || '-').trim();
 
-        const displayName = i.friendly_name || i.product_code || '未知產品';
-        const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+      const showLoc = loc !== lastLoc;
+      const showNoteGroup = noteGroup !== lastNoteGroup;
 
-        const qty = i.current_stock ?? 0;   // ✅ 關鍵：用 current_stock
+      // 是否需要「換地點分隔線」
+      const needSeparator = showLoc && lastLoc !== null;
 
-        const note = (i.location_note || '-')
-        .replace(/\r/g,'')
-        .replace(/\n{2,}/g,'\n')
-        .trim();
+      lastLoc = loc;
+      lastNoteGroup = noteGroup;
 
-        const showPlus = hasFixedStockSet.has(loc) && loc !== 'CONSUMED';
+      const displayName = i.friendly_name || i.product_code || '未知產品';
+      const isUrgent = i.expiry_date && new Date(i.expiry_date) < limitDate;
+      const qty = i.current_stock ?? 0;
 
-        return `
-        <tr>
-            <td class="col-loc"><b>${showLoc ? loc : ''}</b></td>
-            <td class="col-name">
+      const showPlus = hasFixedStockSet.has(loc) && loc !== 'CONSUMED';
+
+      return `
+        <tr class="${needSeparator ? 'loc-separator' : ''}">
+          <!-- 位置：只在第一筆顯示 -->
+          <td class="col-loc">
+            <b>${showLoc ? loc : ''}</b>
+          </td>
+
+          <td class="col-name">
             <div style="font-weight:700;">${displayName}</div>
             <div style="font-size:11px;color:#999;">${i.product_code || ''}</div>
-            </td>
-            <td class="col-exp ${isUrgent ? 'urgent' : ''}">${i.expiry_date || '-'}</td>
-            <td class="col-qty"><b>${qty}</b></td>
-            <td class="col-note">
-            ${note || '-'}
-            ${showPlus ? `<span class="plus-btn" onclick="openModal('${loc}');event.stopPropagation();">[+]</span>` : ``}
-            </td>
+          </td>
+
+          <td class="col-exp ${isUrgent ? 'urgent' : ''}">
+            ${i.expiry_date || '-'}
+          </td>
+
+          <td class="col-qty">
+            <b>${qty}</b>
+          </td>
+
+          <!-- 備註：跟位置一樣做分組 -->
+          <td class="col-note note-group">
+            ${showNoteGroup ? noteGroup : ''}
+            ${showPlus && showNoteGroup
+              ? `<span class="plus-btn" onclick="openModal('${loc}');event.stopPropagation();">[+]</span>`
+              : ''}
+          </td>
         </tr>
-        `;
+      `;
     }).join('');
+
 
     document.getElementById('list').innerHTML =
         html || `<tr><td colspan="5" style="text-align:center;color:#999;">無資料</td></tr>`;
