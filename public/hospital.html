@@ -233,19 +233,19 @@ async function requireUserId() {
           </div>
         </div>
 
-        <div style="margin-top:8px;">
-          <input type="text"
-            value="${note}"
-            style="width:50%;"
-            placeholder="輸入品項備註（如：放在第三抽屜）"
-            onchange="setItemNote(decodeURIComponent('${safeName}'), this.value)"
-          />
+        <div style="margin-top:10px; display:flex; justify-content:flex-end;">
+          <div style="width:50%; display:flex; flex-direction:column; gap:6px;">
+            <input type="text"
+              value="${note}"
+              placeholder="輸入品項備註（如：放在第三抽屜）"
+              onchange="setItemNote(decodeURIComponent('${safeName}'), this.value)"
+            />
+            <div class="muted small">
+              更新時間：${time}　｜　更新者：${op}
+            </div>
+          </div>
         </div>
 
-        <div class="muted small" style="margin-top:6px;">
-          更新時間：${time}　｜　更新者：${op}
-        </div>
-      </div>
     `;
   }
 
@@ -581,6 +581,7 @@ async function requireUserId() {
 
     document.getElementById('reminder-new').value = '';
     await loadReminders(loc);
+    await sync(); 
   }
 
   async function updateReminder(id) {
