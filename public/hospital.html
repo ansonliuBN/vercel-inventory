@@ -220,42 +220,41 @@ async function requireUserId() {
     const safeName = encodeURIComponent(d.item_name);
 
     return `
-      return `
-        <div class="row" data-row="${escAttr(d.item_name)}">
-          
-          <!-- 第一行：品名 + +/- -->
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-            <b>${name}</b>
+      <div class="row" data-row="${escAttr(d.item_name)}">
+        
+        <!-- 第一行：品名 + +/- -->
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+          <b>${name}</b>
 
-            <div class="qty-controls">
-              <button class="qty-btn" onclick="adjustQty(decodeURIComponent('${safeName}'), -1)">−</button>
+          <div class="qty-controls">
+            <button class="qty-btn" onclick="adjustQty(decodeURIComponent('${safeName}'), -1)">−</button>
 
-              <input type="number"
-                data-item="${escAttr(d.item_name)}"
-                value="${qty}"
-                onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
+            <input type="number"
+              data-item="${escAttr(d.item_name)}"
+              value="${qty}"
+              onchange="setQty(decodeURIComponent('${safeName}'), this.value)">
 
-              <button class="qty-btn" onclick="adjustQty(decodeURIComponent('${safeName}'), 1)">+</button>
-            </div>
+            <button class="qty-btn" onclick="adjustQty(decodeURIComponent('${safeName}'), 1)">+</button>
           </div>
-
-          <!-- 第二行：備註輸入框（左） + 更新資訊（右） -->
-          <div style="margin-top:8px; display:flex; align-items:flex-start; gap:12px;">
-            <input type="text"
-              value="${note}"
-              placeholder="輸入品項備註（如：放在第三抽屜）"
-              onchange="setItemNote(decodeURIComponent('${safeName}'), this.value)"
-              style="flex:1; min-width:0;"
-            />
-
-            <div class="muted small" style="flex:0 0 220px; text-align:left; line-height:1.35;">
-              更新時間：${time}<br>
-              更新者：${op}
-            </div>
-          </div>
-
         </div>
-      `;
+
+        <!-- 第二行：備註輸入框（左） + 更新資訊（右） -->
+        <div style="margin-top:8px; display:flex; align-items:flex-start; gap:12px;">
+          <input type="text"
+            value="${note}"
+            placeholder="輸入品項備註（如：放在第三抽屜）"
+            onchange="setItemNote(decodeURIComponent('${safeName}'), this.value)"
+            style="flex:1; min-width:0;"
+          />
+
+          <div class="muted small" style="flex:0 0 220px; text-align:left; line-height:1.35;">
+            更新時間：${time}<br>
+            更新者：${op}
+          </div>
+        </div>
+
+      </div>
+    `;
   }
 
   // 用在 onclick / attribute 的逃逸（避免引號炸掉）
