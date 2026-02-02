@@ -127,6 +127,7 @@
             if (window.innerWidth <= 950) document.getElementById('menu').classList.remove('active');
 
         }
+        window.go = go; // ✅ 這行加上更保險
 
         function showLoggedIn(session) {
             document.getElementById('login-screen').style.display = 'none';

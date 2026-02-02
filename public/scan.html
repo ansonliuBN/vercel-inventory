@@ -420,15 +420,19 @@
 
     if (res.ok) {
       alert("✅ 匯入成功！已存入 " + qty + " 件物料。");
-      if (window.parent !== window) {
-        window.top.location.href = '/';
+
+      // ✅ 回到主頁：切到庫存總表
+      if (window.parent && window.parent !== window) {
+        const btn = window.parent.document.getElementById('btn-list');
+        window.parent.go('list.html', btn);          // 切 iframe
+        window.parent.sessionStorage.setItem('lastPage', 'list.html'); // 保險：刷新也在總表
+      } else {
+        // 不是 iframe 情境（直接開 scan.html）
+        location.href = '/';
       }
-    } else {
-      const err = await res.json().catch(() => ({message: "連線異常"}));
-      alert("❌ 失敗: " + err.message);
-      loader.style.display = 'none';
     }
   }
+
 
   btnPick.addEventListener("click", () => fileInput.click());
   btnCam.addEventListener("click", startCamera);

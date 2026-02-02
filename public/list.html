@@ -280,14 +280,17 @@
 
     if (error) return;
 
-    // 哪些 location 有固定庫存
-    const { data: hsLocs } = await _supabase
-        .from('hospital_stock')
-        .select('location_name');
+    // 哪些 location 有固定庫存（改用 hospital_stock_current）
+    const { data: hsLocs, error: hsErr } = await _supabase
+      .from('hospital_stock_current')
+      .select('location_name');
+
+    if (hsErr) console.warn('讀取 hospital_stock_current 失敗：', hsErr);
 
     const hasFixedStockSet = new Set(
-        (hsLocs || []).map(x => x.location_name).filter(Boolean)
+      (hsLocs || []).map(x => x.location_name).filter(Boolean)
     );
+
 
     // 排序：位置 → 產品
     summary.sort((a, b) => {
@@ -384,10 +387,11 @@
     body.innerHTML = '讀取中...';
 
     const { data, error } = await _supabase
-        .from('hospital_stock')
-        .select('item_name, quantity, unit, note')
-        .eq('location_name', locName)
-        .order('item_name');
+      .from('hospital_stock_current')
+      .select('item_name, quantity, note, operator, updated_at')
+      .eq('location_name', locName)
+      .order('item_name');
+
 
     if (error) {
         body.innerHTML = '讀取失敗';
@@ -395,19 +399,25 @@
     }
 
     if (data && data.length > 0) {
-        body.innerHTML = data.map(d => `
+      body.innerHTML = data.map(d => `
         <div style="padding:10px 0;border-bottom:1px solid #eee;">
-            <div style="display:flex;justify-content:space-between;">
-            <b>${d.item_name}</b>
-            <span>${d.quantity ?? 0} ${d.unit || ''}</span>
-            </div>
-            <div style="font-size:12px;color:#888;margin-top:4px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;">
+            <b style="flex:1;overflow-wrap:anywhere;">${d.item_name}</b>
+            <span><b>${d.quantity ?? 0}</b></span>
+          </div>
+
+          <div style="font-size:12px;color:#888;margin-top:4px;">
             ${d.note || '<無備註>'}
-            </div>
+          </div>
+
+          <div style="font-size:11px;color:#aaa;margin-top:4px;">
+            更新：${d.updated_at ? new Date(d.updated_at).toLocaleString('zh-TW', { hour12:false }) : '無'}
+            ｜ 更新者：${d.operator || '-'}
+          </div>
         </div>
-        `).join('');
+      `).join('');
     } else {
-        body.innerHTML = '<div style="color:#999;text-align:center;">無固定庫存</div>';
+      body.innerHTML = '<div style="color:#999;text-align:center;">無固定庫存</div>';
     }
     }
 
